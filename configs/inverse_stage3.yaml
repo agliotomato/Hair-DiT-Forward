@@ -1,0 +1,36 @@
+# Stage 3: Cycle-consistent bidirectional joint training (Option B)
+# - Alternating mini-batch per step:
+#     odd  step  → Forward FM batch : ControlNet update only (inverse frozen)
+#     even step  → Inverse batch    : Inverse module update + ControlNet update via cycle
+# - Cycle loss active from cycle_start epoch
+# - Regression monitor: val_loss_fwd logged every eval_every epochs
+# Resume from Stage 2 checkpoint.
+base: configs/inverse_head.yaml
+
+stage: 3
+bidirectional: true
+controlnet_trainable: true   # Option B: unfreeze ControlNet
+controlnet_lr: 5.0e-6        # ~10x lower than inverse LR (regression 방지)
+use_gt_matte: true
+w_fm_forward: 0.1            # was 0.05 — stronger forward signal for CN
+
+training:
+  epochs: 50
+  batch_size: 4      # GH200 96GB 기준 (A100 40GB 대비 2.4배)
+  resume: checkpoints/inverse_stage2/final.pth
+  cycle_start: 40    # epoch 30 resume → 10 epoch warm-up 후 cycle 시작
+  learning_rate: 5.0e-5
+  loss_weights:
+    structure: 1.0
+    dice: 1.0
+    color: 0.5
+    tv: 0.0
+    cycle: 0.01
+    lpips_cycle: 0.05
+
+checkpointing:
+  output_dir: checkpoints/inverse_stage3/
+  eval_every: 2
+  save_every: 5
+
+run_name: inverse_stage3

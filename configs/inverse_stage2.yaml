@@ -1,0 +1,29 @@
+# Stage 2: Inverse warm-start (supervised only)
+# - Single inverse LoRA (blocks 0-11) + shared back_blocks (12-23) + FPN decoder
+# - No cycle loss, no bidirectional — pure supervised phase
+# - Matte from GT (external at inference: SHS / BiSeNet)
+base: configs/inverse_head.yaml
+
+stage: 2
+bidirectional: false
+use_gt_matte: true
+
+training:
+  epochs: 30
+  batch_size: 8      # GH200 96GB, supervised only (CN/cycle 없음)
+  cycle_start: 9999
+  loss_weights:
+    structure: 1.0
+    dice: 1.0
+    color: 0.5
+    tv: 0.0
+    sharp: 0.5        # binarization: mask*(1-mask) → pushes sigmoid toward 0 or 1
+    cycle: 0.0        # disable cycle → ControlNet not loaded (saves ~4GB VRAM)
+    lpips_cycle: 0.0
+
+checkpointing:
+  output_dir: checkpoints/inverse_stage2/
+  eval_every: 2
+  save_every: 5
+
+run_name: inverse_stage2

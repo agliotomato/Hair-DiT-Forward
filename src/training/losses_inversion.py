@@ -1,0 +1,85 @@
+"""
+Inverse Head Loss Functions.
+
+Supervised (Phase 1):
+  L_structure = BCE(stroke_mask_pred, stroke_mask_GT)
+  L_color     = L1(sketch_pred, sketch_GT) * stroke_mask_GT  (stroke 영역만)
+
+Optional feature cycle (Phase 2, block_pred/block_gt provided):
+  L_feature   = mean MSE(block_pred[i], block_gt[i]) over N blocks
+"""
+
+from __future__ import annotations
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+
+class InversionLoss(nn.Module):
+    def __init__(
+        self,
+        w_structure: float = 1.0,
+        w_color: float = 0.5,
+        w_feature: float = 0.1,
+        w_dice: float = 1.0,
+    ):
+        super().__init__()
+        self.w_structure = w_structure
+        self.w_color     = w_color
+        self.w_feature   = w_feature
+        self.w_dice      = w_dice
+
+    def forward(
+        self,
+        stroke_mask_pred: torch.Tensor,              # (B, 1, 512, 512)
+        sketch_pred: torch.Tensor,                   # (B, 3, 512, 512)
+        sketch_gt: torch.Tensor,                     # (B, 3, 512, 512)
+        block_pred: list[torch.Tensor] | None = None,
+        block_gt:   list[torch.Tensor] | None = None,
+        w_feature_current: float | None = None,
+    ) -> tuple[torch.Tensor, dict]:
+
+        stroke_mask_pred = stroke_mask_pred.float()
+        sketch_pred      = sketch_pred.float()
+        sketch_gt        = sketch_gt.float()
+
+        stroke_mask_gt = (sketch_gt.max(dim=1, keepdim=True).values > 0.05).float()
+
+        l_structure = F.binary_cross_entropy(stroke_mask_pred, stroke_mask_gt)
+
+        # Dice loss: binary segmentation sharpness
+        pred_flat = stroke_mask_pred.view(-1)
+        gt_flat   = stroke_mask_gt.view(-1)
+        intersection = (pred_flat * gt_flat).sum()
+        l_dice = 1.0 - (2.0 * intersection + 1.0) / (pred_flat.sum() + gt_flat.sum() + 1.0)
+
+        n_stroke = stroke_mask_gt.sum().clamp(min=1)
+        l_color  = (F.l1_loss(sketch_pred, sketch_gt, reduction="none") * stroke_mask_gt).sum() / n_stroke
+
+        total = self.w_structure * l_structure + self.w_dice * l_dice + self.w_color * l_color
+        log = {
+            "loss_structure": l_structure.item(),
+            "loss_dice":      l_dice.item(),
+            "loss_color":     l_color.item(),
+        }
+
+        if block_pred is not None and block_gt is not None:
+            l_feature = sum(
+                F.mse_loss(bp.float(), bg.float())
+                for bp, bg in zip(block_pred, block_gt)
+            ) / len(block_pred)
+            w = w_feature_current if w_feature_current is not None else self.w_feature
+            total = total + w * l_feature
+            log["loss_feature"]      = l_feature.item()
+            log["w_feature_current"] = w
+
+        log["loss_total"] = total.item()
+        return total, log
+
+
+def tv_loss(mask: torch.Tensor) -> torch.Tensor:
+    """Total Variation loss: penalizes abrupt mask discontinuities → smoother strokes."""
+    diff_h = (mask[:, :, 1:, :] - mask[:, :, :-1, :]).abs().mean()
+    diff_w = (mask[:, :, :, 1:] - mask[:, :, :, :-1]).abs().mean()
+    return diff_h + diff_w
