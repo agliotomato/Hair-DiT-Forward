@@ -22,6 +22,6 @@ training:
     edge: 0.02                      # light edge loss (braid 비율 1/4이므로 약하게)
 
 checkpointing:
-  output_dir: checkpoints/ablation_unified/
+  output_dir: checkpoints/ablation_joint/
   eval_every: 10
   save_every: 20
