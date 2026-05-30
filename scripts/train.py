@@ -28,11 +28,10 @@ def load_config(config_path: str) -> dict:
     with open(config_path) as f:
         cfg = yaml.safe_load(f)
 
-    # Merge with base config
+    # Merge with base config (recursive: handles chained base references)
     base_path = cfg.pop("base", None)
     if base_path:
-        with open(base_path) as f:
-            base_cfg = yaml.safe_load(f)
+        base_cfg = load_config(base_path)
         # Deep merge: cfg overrides base
         merged = deep_merge(base_cfg, cfg)
         return merged
