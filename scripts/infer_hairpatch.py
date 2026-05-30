@@ -56,8 +56,7 @@ def load_config(path: str) -> dict:
         cfg = yaml.safe_load(f)
     base_path = cfg.pop("base", None)
     if base_path:
-        with open(base_path) as f:
-            base_cfg = yaml.safe_load(f)
+        base_cfg = load_config(base_path)
         cfg = _deep_merge(base_cfg, cfg)
     return cfg
 
