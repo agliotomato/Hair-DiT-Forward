@@ -80,6 +80,40 @@ def load_sketch(path: Path) -> torch.Tensor:
     return _to_rgb(Image.open(path).convert("RGB")).unsqueeze(0)
 
 
+def color_code_sketch(sketch: torch.Tensor, gt: torch.Tensor, matte: torch.Tensor) -> torch.Tensor:
+    """각 스트로크 색을 GT 헤어 영역의 평균 색상으로 교체.
+
+    sketch: (1, 3, H, W) float [0,1]
+    gt:     (1, 3, H, W) float [0,1]
+    matte:  (1, 1, H, W) float [0,1]
+    """
+    s = sketch.squeeze(0)           # (3, H, W)
+    target = (gt * matte).squeeze(0)  # (3, H, W) — hair region only
+
+    s_u8 = (s * 255).byte()
+    s_q  = (s_u8 >> 3) << 3        # 5-bit quantize for unique stroke detection
+
+    flat_q = s_q.view(3, -1).T     # (N, 3)
+    unique_colors = torch.unique(flat_q, dim=0)
+
+    out = s.clone()
+    for color in unique_colors:
+        r, g, b = color.tolist()
+        if r == 0 and g == 0 and b == 0:
+            continue                # 배경 스킵
+
+        mask = (s_q[0] == r) & (s_q[1] == g) & (s_q[2] == b)
+        hair_px = target[:, mask]   # (3, N)
+        valid = hair_px.sum(dim=0) > 0.05
+        if valid.sum() < 4:
+            continue
+
+        sampled = hair_px[:, valid].float().mean(dim=1)  # mean color
+        out[:, mask] = sampled.unsqueeze(1)
+
+    return out.unsqueeze(0)
+
+
 def load_matte(path: Path) -> torch.Tensor:
     return _to_gray(Image.open(path).convert("L")).unsqueeze(0)
 
@@ -179,6 +213,8 @@ def main():
     parser.add_argument("--output_dir",   default="outputs/hairpatch/")
     parser.add_argument("--schedule",     default="none",
                         choices=["none", "front_only", "all", "back_only"])
+    parser.add_argument("--gt_dir",       default=None,
+                        help="GT 이미지 디렉토리 — 지정 시 스트로크 색을 GT 헤어색으로 교체")
     args = parser.parse_args()
 
     cfg    = load_config(args.config)
@@ -234,6 +270,14 @@ def main():
             if matte_path:
                 print(f"  [{stem}] matte 없음: {matte_path} → sketch 전경으로 대체")
             matte = (sketch.mean(dim=1, keepdim=True) > 0.05).float()
+
+        if args.gt_dir:
+            for ext in (".png", ".jpg"):
+                gt_path = Path(args.gt_dir) / (stem + ext)
+                if gt_path.exists():
+                    gt = _to_rgb(Image.open(gt_path).convert("RGB")).unsqueeze(0)
+                    sketch = color_code_sketch(sketch, gt, matte)
+                    break
 
         print(f"  {stem}: 샘플링 중 ({args.num_steps} steps)...")
         hair_recon = run_sampling(
