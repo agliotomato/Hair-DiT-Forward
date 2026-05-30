@@ -4,3 +4,6 @@ training:
   schedule: back_only
   batch_size: 8
   gradient_accumulation_steps: 1
+
+checkpointing:
+  output_dir: checkpoints/phase2_braid_back_only/

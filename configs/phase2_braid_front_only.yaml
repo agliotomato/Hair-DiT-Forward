@@ -2,3 +2,6 @@ base: configs/phase2_braid.yaml
 
 training:
   schedule: front_only
+
+checkpointing:
+  output_dir: checkpoints/phase2_braid_front_only/
