@@ -2,6 +2,8 @@ base: configs/phase2_braid.yaml
 
 training:
   schedule: all
+  batch_size: 8
+  gradient_accumulation_steps: 1
 
 checkpointing:
   output_dir: checkpoints/phase2_braid_all/
