@@ -42,8 +42,9 @@ from tqdm import tqdm
 
 warnings.filterwarnings("ignore")
 
-ROOT    = Path(__file__).parent.parent
-OUT_DIR = ROOT / "eval_results"
+ROOT     = Path(__file__).parent.parent
+DATA_ROOT = ROOT.parent / "hair-dit" / "dataset"
+OUT_DIR  = ROOT / "eval_results"
 OUT_DIR.mkdir(exist_ok=True)
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -243,13 +244,17 @@ def _compute_fid(real_imgs: list, fake_imgs: list) -> float:
 # Core per-split evaluation (재사용 가능한 함수)
 # ---------------------------------------------------------------------------
 
-def _collect_split(split: str, variants: list) -> tuple:
+def _collect_split(split: str, variants: list, result_dir: str = "custom_results/ablation_cl", data_root: str = None) -> tuple:
     """단일 split에 대해 per-image 지표 수집 및 FID 버퍼 반환."""
-    gt_img_dir   = ROOT / f"dataset/{split}/img/test"
-    gt_matte_dir = ROOT / f"dataset/{split}/matte/test"
-    sketch_dir   = ROOT / f"dataset/{split}/sketch/test"
+    ds_root = Path(data_root) if data_root else ROOT / "dataset"
+    gt_img_dir   = ds_root / f"{split}/img/test"
+    gt_matte_dir = ds_root / f"{split}/matte/test"
+    sketch_dir   = ds_root / f"{split}/sketch/test"
 
-    stems = sorted(p.stem for p in gt_img_dir.glob("*.png"))
+    valid = (set(p.stem for p in gt_img_dir.glob("*.png"))
+             & set(p.stem for p in gt_matte_dir.glob("*.png"))
+             & set(p.stem for p in sketch_dir.glob("*.png")))
+    stems = sorted(valid)
     print(f"\n  [{split}] {len(stems)}개")
     if len(stems) < 500:
         print(f"  [WARNING] FID는 500장 이상 권장")
@@ -269,7 +274,7 @@ def _collect_split(split: str, variants: list) -> tuple:
         row       = {"stem": stem, "_split": split}
 
         for tag, _ in variants:
-            pred_path = ROOT / f"custom_results/ablation_cl/{tag}/{split}/{stem}.png"
+            pred_path = ROOT / f"{result_dir}/{tag}/{split}/{stem}.png"
             if not pred_path.exists():
                 for k in METRIC_KEYS:
                     row[f"{tag}_{k}"] = None
@@ -314,14 +319,14 @@ def _write_results(split_label: str, rows: list, fid_buf: dict, variants: list) 
     # per-image CSV
     per_img_path = OUT_DIR / f"ablation_cl_{split_label}_per_image.csv"
     fieldnames   = ["stem"] + [f"{tag}_{k}" for tag, _ in variants for k in non_fid_keys]
-    with open(per_img_path, "w", newline="") as f:
+    with open(per_img_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
 
     # summary CSV
     summary_path = OUT_DIR / f"ablation_cl_{split_label}_summary.csv"
-    with open(summary_path, "w", newline="") as f:
+    with open(summary_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(["metric"] + [label for _, label in variants])
         for k in non_fid_keys:
@@ -356,20 +361,34 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--split", default="unbraid",
                         choices=["unbraid", "braid", "combined"])
+    parser.add_argument("--result_dir", default="custom_results/ablation_cl",
+                        help="결과 이미지 루트 (예: ablation_cl_run2)")
+    parser.add_argument("--data_root", default=None,
+                        help="GT 데이터셋 루트 (예: /path/to/hair-dit/dataset)")
+    parser.add_argument("--out_dir", default=None,
+                        help="결과 CSV 저장 폴더 (기본: eval_results)")
     args = parser.parse_args()
 
+    global OUT_DIR
+    if args.out_dir:
+        OUT_DIR = ROOT / args.out_dir
+        OUT_DIR.mkdir(exist_ok=True)
+
+    rd = args.result_dir
+    dr = args.data_root
+
     if args.split == "unbraid":
-        rows, fid_buf = _collect_split("unbraid", VARIANTS_UNBRAID)
+        rows, fid_buf = _collect_split("unbraid", VARIANTS_UNBRAID, rd, dr)
         _write_results("unbraid", rows, fid_buf, VARIANTS_UNBRAID)
 
     elif args.split == "braid":
-        rows, fid_buf = _collect_split("braid", VARIANTS_BRAID)
+        rows, fid_buf = _collect_split("braid", VARIANTS_BRAID, rd, dr)
         _write_results("braid", rows, fid_buf, VARIANTS_BRAID)
 
     elif args.split == "combined":
         # unbraid + braid 합산, C3/C4/C5만 평가
-        rows_u, fid_u = _collect_split("unbraid", VARIANTS_COMBINED)
-        rows_b, fid_b = _collect_split("braid",   VARIANTS_COMBINED)
+        rows_u, fid_u = _collect_split("unbraid", VARIANTS_COMBINED, rd, dr)
+        rows_b, fid_b = _collect_split("braid",   VARIANTS_COMBINED, rd, dr)
 
         rows_all = rows_u + rows_b
 

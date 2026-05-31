@@ -22,21 +22,25 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.models.controlnet_sd35 import make_matte_tok
 
-DEFAULT_MATTE = "dataset/unbraid/matte/train/Fgo_350.png"
-
-
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--matte", default=DEFAULT_MATTE)
+    parser.add_argument("--matte", default=None, help="matte PNG 경로 (없으면 synthetic 사용)")
     parser.add_argument("--output", default="outputs/verify_matte_tok.png")
     args = parser.parse_args()
 
-    matte_path = Path(args.matte)
-    assert matte_path.exists(), f"matte 파일 없음: {matte_path}"
-
-    # 1. 원본 matte 로드 (1, 1, 512, 512)
-    matte_pil = Image.open(matte_path).convert("L").resize((512, 512), Image.BILINEAR)
-    matte = transforms.ToTensor()(matte_pil).unsqueeze(0)  # (1, 1, 512, 512)
+    # 1. matte 로드 또는 synthetic 생성 (1, 1, 512, 512)
+    if args.matte is not None:
+        matte_path = Path(args.matte)
+        assert matte_path.exists(), f"matte 파일 없음: {matte_path}"
+        matte_pil = Image.open(matte_path).convert("L").resize((512, 512), Image.BILINEAR)
+        matte = transforms.ToTensor()(matte_pil).unsqueeze(0)
+    else:
+        # 상→하 gradient + 좌→우 gradient 합산 — 방향 오류 즉시 검출
+        row = torch.linspace(0, 1, 512).view(1, 1, 512, 1).expand(1, 1, 512, 512)
+        col = torch.linspace(0, 1, 512).view(1, 1, 1, 512).expand(1, 1, 512, 512)
+        matte = (row + col) / 2
+        matte_pil = Image.fromarray((matte.squeeze().numpy() * 255).astype("uint8"))
+        print("synthetic gradient matte 사용 (실제 파일 없음)")
 
     # 2. make_matte_tok 적용 → (1, 1024, 1)
     tok = make_matte_tok(matte)  # (1, 1024, 1)
