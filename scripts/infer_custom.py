@@ -147,6 +147,40 @@ def recolor_sketch(sketch: torch.Tensor, hair_color: tuple[int, int, int]) -> to
     return result.unsqueeze(0)
 
 
+def color_code_sketch(
+    sketch: torch.Tensor,   # (1, 3, H, W) [0,1]  raw rainbow-label sketch
+    img: torch.Tensor,      # (1, 3, H, W) [0,1]  원본 사진 (face)
+    matte: torch.Tensor,    # (1, 1, H, W) [0,1]
+    quantize_bits: int = 5,
+    min_pixels: int = 10,
+) -> torch.Tensor:
+    """각 stroke 라벨을 img(매트 내) 실제 머리색 평균으로 교체.
+
+    학습 때 StrokeColorSampler(p=1.0)가 한 것과 동일(deterministic 평균). raw 스케치는
+    stroke마다 임의 고유색(라벨)이라 그대로 넣으면 학습 분포와 어긋나므로, 입력 단계에서
+    학습이 본 color-coded 스케치로 변환한다.
+    """
+    shift  = 8 - quantize_bits
+    sk     = sketch[0]                 # (3, H, W)
+    target = (img * matte)[0]          # (3, H, W) hair 영역 (배경 0)
+
+    sk_q   = ((sk * 255).byte() >> shift) << shift     # 양자화 라벨
+    uniq   = torch.unique(sk_q.view(3, -1).T, dim=0)   # (K, 3)
+
+    out = sk.clone()
+    for color in uniq:
+        r, g, b = color.tolist()
+        if r == 0 and g == 0 and b == 0:               # 검은 배경 stroke 유지
+            continue
+        mask = (sk_q[0] == r) & (sk_q[1] == g) & (sk_q[2] == b)  # (H, W)
+        hair = target[:, mask]                         # (3, N)
+        valid = hair.sum(dim=0) > 0.05
+        if valid.sum() < min_pixels:
+            continue
+        out[:, mask] = hair[:, valid].float().mean(dim=1).unsqueeze(1)
+    return out.unsqueeze(0)
+
+
 # ---------------------------------------------------------------------------
 # Sampling
 # ---------------------------------------------------------------------------
@@ -292,6 +326,9 @@ def main():
                         help="stroke 색 교체 (R,G,B 0-255). 예: 139,90,43 (갈색)")
     parser.add_argument("--no_composite", action="store_true",
                         help="최종 feathered 픽셀 합성 끄기 (순수 BLD 출력, eval Pass A용).")
+    parser.add_argument("--color_code", action="store_true",
+                        help="입력 단계에서 raw(라벨) 스케치를 face 실제 머리색으로 컬러코딩 "
+                             "(학습 분포와 일치). --face 필요.")
     args = parser.parse_args()
 
     cfg    = load_config(args.config)
@@ -354,6 +391,13 @@ def main():
             face = load_face(face_file)
         elif face_file:
             print(f"  [WARNING] face 없음: {face_file} → hair patch만 생성")
+
+        # 입력 단계 컬러코딩 (학습 분포 일치). conditioning·panel 모두 코딩된 스케치 사용.
+        if args.color_code:
+            if face is not None:
+                sketch = color_code_sketch(sketch, face, matte)
+            else:
+                print(f"  [{stem}] --color_code엔 --face 필요 → 건너뜀")
 
         latents = run_sampling(
             controlnet, transformer, vae, scheduler,
