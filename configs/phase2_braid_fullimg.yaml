@@ -16,9 +16,9 @@ training:
   full_image_target: true
 
   epochs: 40
-  batch_size: 2
-  gradient_accumulation_steps: 4
-  learning_rate: 2.0e-5
+  batch_size: 16                   # H100 80GB
+  gradient_accumulation_steps: 1   # effective batch 16
+  learning_rate: 2.8e-5            # 1.4× (effective batch 8→16 보정)
   warmup_steps: 100
 
   loss_weights:
