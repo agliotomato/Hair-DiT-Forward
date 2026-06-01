@@ -12,7 +12,7 @@ Usage:
     --config    configs/phase2_braid.yaml \
     --output_dir custom_results/
 
-  # face 이미지 포함 → latent space 합성으로 full image 출력
+  # face 이미지 포함 → BLD(매 스텝 latent blending)로 full image 직접 생성
   python scripts/infer_custom.py \
     --sketch    custom/my_sketch.png \
     --matte     custom/my_matte.png \
@@ -42,9 +42,8 @@ Usage:
   {name}_panel.png — [sketch | matte | hair patch] 3열 비교
 
 출력 (face 있을 때):
-  {name}_gen.png   — 생성된 hair patch
-  {name}_full.png  — face + hair latent 합성 full image
-  {name}_panel.png — [sketch | matte | hair patch | full image] 4열 비교
+  {name}_full.png  — BLD(매 스텝 latent blending)로 생성된 full image
+  {name}_panel.png — [sketch | matte | full image] 3열 비교
 """
 
 import argparse
@@ -154,16 +153,38 @@ def recolor_sketch(sketch: torch.Tensor, hair_color: tuple[int, int, int]) -> to
 
 @torch.no_grad()
 def run_sampling(
-    controlnet, transformer, scheduler,
+    controlnet, transformer, vae, scheduler,
     sketch, matte, num_steps, device,
+    face: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    """Euler sampling → hair latent (1, 16, 64, 64). Decode는 caller에서."""
+    """BLD (Blended Latent Diffusion) Euler sampling → latent (1, 16, 64, 64).
+
+    When ``face`` is given, the region outside the matte is overwritten at every
+    denoising step with the original face noised to the current sigma, so the
+    background is carried by the diffusion itself — no post-hoc compositing.
+    Background noise uses a single fixed gaussian (consistent forward trajectory).
+    Decode는 caller에서.
+    """
     scheduler.set_timesteps(num_steps, device=device)
-    latents = torch.randn(1, 16, 64, 64, device=device, dtype=torch.bfloat16)
+
+    noise   = torch.randn(1, 16, 64, 64, device=device, dtype=torch.bfloat16)  # fixed
+    latents = noise.clone()
+
+    blend = face is not None
+    if blend:
+        x0_bg    = vae.encode(face.to(device=device, dtype=torch.bfloat16))
+        # area pooling preserves soft matte values at latent resolution
+        mask_lat = F.interpolate(
+            matte.to(device), size=(64, 64), mode="area"
+        ).to(dtype=torch.bfloat16)
 
     for i, t in enumerate(tqdm(scheduler.timesteps, desc="steps", leave=False)):
         sigma = scheduler.sigmas[i].to(device)
         sigmas_1d = sigma.view(1).to(dtype=torch.bfloat16)
+
+        if blend:
+            noised_bg = (1.0 - sigma) * x0_bg + sigma * noise
+            latents   = mask_lat * latents + (1.0 - mask_lat) * noised_bg
 
         block_samples, null_enc_hs, null_pooled = controlnet(
             noisy_latent=latents,
@@ -191,39 +212,9 @@ def run_sampling(
 
 @torch.no_grad()
 def decode_hair(vae, hair_latent: torch.Tensor) -> torch.Tensor:
-    """hair latent → hair patch [0,1]."""
+    """latent → image [0,1]."""
     image = vae.decode(hair_latent)
     return (image.float().clamp(-1, 1) + 1) / 2
-
-
-@torch.no_grad()
-def composite_latent_and_decode(
-    vae,
-    hair_latent: torch.Tensor,
-    matte: torch.Tensor,
-    face: torch.Tensor,
-    device: torch.device,
-) -> torch.Tensor:
-    """
-    Latent space 합성 (SHS 방식): hair_latent * m + face_latent * (1-m) → decode → [0,1].
-    matte: (1, 1, 512, 512) → area pooling으로 64×64 다운샘플 후 soft weighted-sum.
-    """
-    face_latent = vae.encode(face.to(device=device, dtype=torch.bfloat16))
-    # area pooling: 픽셀 평균으로 matte 값 보존 (SHS soft blend용)
-    matte_latent = F.interpolate(
-        matte.to(device), size=(64, 64), mode="area"
-    ).to(dtype=torch.bfloat16)
-
-    # SHS 방식 soft weighted-sum: feature * m + bg_feature * (1 - m)
-    composite = hair_latent * matte_latent + face_latent * (1.0 - matte_latent)
-    image = vae.decode(composite)
-    image_01 = (image.float().clamp(-1, 1) + 1) / 2
-
-    # pixel space: matte 값으로 soft blend (얼굴 보존)
-    matte_pixel = matte.to(device=device, dtype=torch.float32)
-    face_01 = face.to(device=device, dtype=torch.float32)
-    image_01 = image_01 * matte_pixel + face_01 * (1.0 - matte_pixel)
-    return image_01
 
 
 # ---------------------------------------------------------------------------
@@ -299,6 +290,8 @@ def main():
     parser.add_argument("--output_dir",  default="custom_results")
     parser.add_argument("--hair_color",  default=None,
                         help="stroke 색 교체 (R,G,B 0-255). 예: 139,90,43 (갈색)")
+    parser.add_argument("--no_composite", action="store_true",
+                        help="최종 feathered 픽셀 합성 끄기 (순수 BLD 출력, eval Pass A용).")
     args = parser.parse_args()
 
     cfg    = load_config(args.config)
@@ -355,25 +348,33 @@ def main():
                 print(f"  [WARNING] matte 없음: {matte_file} → 스케치 fg 영역으로 대체")
             matte = sketch_to_matte(sketch)
 
-        hair_latent = run_sampling(
-            controlnet, transformer, scheduler,
-            sketch, matte, args.num_steps, device,
-        )
-
-        hair_patch = decode_hair(vae, hair_latent)
-        Image.fromarray(to_uint8(hair_patch.cpu())).save(output_dir / f"{stem}_gen.png")
-
-        panel_imgs = [to_uint8(sketch.cpu()), to_uint8(matte.cpu()), to_uint8(hair_patch.cpu())]
-
+        # BLD: face가 있으면 매 스텝 latent blending으로 full image를 직접 생성.
+        face = None
         if face_file and face_file.exists():
             face = load_face(face_file)
-            full = composite_latent_and_decode(vae, hair_latent, matte, face, device)
-            Image.fromarray(to_uint8(full.cpu())).save(output_dir / f"{stem}_full.png")
-            panel_imgs.append(to_uint8(full.cpu()))
-        else:
-            if face_file:
-                print(f"  [WARNING] face 없음: {face_file}")
+        elif face_file:
+            print(f"  [WARNING] face 없음: {face_file} → hair patch만 생성")
 
+        latents = run_sampling(
+            controlnet, transformer, vae, scheduler,
+            sketch, matte, args.num_steps, device,
+            face=face,
+        )
+        result = decode_hair(vae, latents)
+
+        # 최종 합성: 마스크 바깥을 원본 face 픽셀로 고정 (soft matte = feather).
+        # BLD는 디퓨전 안에서 harmonize하지만 VAE decode가 lossy라 바깥이 미세하게
+        # drift하므로, identity 보존을 위해 기본 ON. --no_composite로 순수 BLD.
+        if face is not None and not args.no_composite:
+            m = matte.to(device=result.device, dtype=result.dtype)
+            f = face.to(device=result.device, dtype=result.dtype)
+            result = result * m + f * (1.0 - m)
+
+        # face 있으면 result == BLD full image, 없으면 hair patch
+        out_name = f"{stem}_full.png" if face is not None else f"{stem}_gen.png"
+        Image.fromarray(to_uint8(result.cpu())).save(output_dir / out_name)
+
+        panel_imgs = [to_uint8(sketch.cpu()), to_uint8(matte.cpu()), to_uint8(result.cpu())]
         panel = Image.fromarray(np.concatenate(panel_imgs, axis=1))
         panel.save(output_dir / f"{stem}_panel.png")
 

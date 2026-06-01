@@ -1,0 +1,34 @@
+# Phase 2 (full-image) — Braid fine-tuning for BLD
+#
+# Same as phase2_braid.yaml, but continues the full-image Phase 1 model and keeps
+# the full-image target + pure masked loss (outside=0). Produces the final BLD
+# checkpoint that renders a harmonized full image at inference.
+#
+# Run (GPU server, after Phase 1 full-image finishes):
+#   python scripts/train.py --config configs/phase2_braid_fullimg.yaml
+
+base: configs/base.yaml
+
+training:
+  phase: finetune
+  dataset: braid
+  resume_from: checkpoints/phase1_unbraid_fullimg/epoch_40.pth
+  full_image_target: true
+
+  epochs: 40
+  batch_size: 2
+  gradient_accumulation_steps: 4
+  learning_rate: 2.0e-5
+  warmup_steps: 100
+
+  loss_weights:
+    flow: 1.0
+    outside: 0.0              # TRUE masked loss — hair region only
+    lpips: 0.1
+    lpips_warmup_frac: 0.0    # LPIPS active immediately
+    edge: 0.05                # edge loss for braid structure fidelity
+
+checkpointing:
+  output_dir: checkpoints/phase2_braid_fullimg/
+  eval_every: 5
+  save_every: 10

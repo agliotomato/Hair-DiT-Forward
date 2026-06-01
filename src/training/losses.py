@@ -159,6 +159,7 @@ class HairLoss(nn.Module):
         w_lpips: float = 0.1,
         w_edge: float = 0.05,
         lpips_warmup_frac: float = 0.3,
+        flow_outside_weight: float = 0.1,
     ):
         super().__init__()
         assert phase in ("pretrain", "finetune"), f"Unknown phase: {phase}"
@@ -168,7 +169,10 @@ class HairLoss(nn.Module):
         self.w_edge = w_edge
         self.lpips_warmup_frac = lpips_warmup_frac
 
-        self.flow_loss = FlowMatchingLoss(outside_weight=0.1)
+        # flow_outside_weight=0.0 → true masked loss (hair region only). With
+        # full_image_target the background is overwritten by BLD at inference,
+        # so supervising it is pointless; keep loss purely inside the matte.
+        self.flow_loss = FlowMatchingLoss(outside_weight=flow_outside_weight)
         self.perc_loss = PerceptualLoss()
         self.edge_loss = SketchEdgeAlignmentLoss()
 

@@ -33,6 +33,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from diffusers import FlowMatchEulerDiscreteScheduler, SD3Transformer2DModel
 
+from src.data.utils import resize_matte_to_latent
 from src.models.controlnet_sd35 import HairControlNet
 from src.models.vae_wrapper import VAEWrapper
 
@@ -104,13 +105,36 @@ def run_sampling(
     num_steps: int,
     device: torch.device,
     dtype: torch.dtype,
+    bg_image: torch.Tensor | None = None,
 ) -> torch.Tensor:
+    """Flow-matching sampling, optionally with RePaint-style latent blending.
+
+    When ``bg_image`` is given, the region *outside* the matte is overwritten at
+    every step with the correctly-noised version of the original image, so only
+    the matte interior is freely denoised into new hair. Background noise uses a
+    single fixed gaussian (consistent flow-matching forward trajectory).
+    """
     scheduler.set_timesteps(num_steps, device=device)
-    latents = torch.randn(1, 16, 64, 64, device=device, dtype=dtype)
+
+    noise   = torch.randn(1, 16, 64, 64, device=device, dtype=dtype)  # fixed
+    latents = noise.clone()
+
+    blend = bg_image is not None
+    if blend:
+        # x0_bg: clean background latent;  mask_lat: 1=hair interior, 0=background
+        x0_bg    = vae.encode(bg_image.to(device=device, dtype=dtype)).to(dtype)
+        mask_lat = resize_matte_to_latent(
+            matte.to(device=device, dtype=torch.float32)
+        ).to(dtype)
 
     for i, t in enumerate(tqdm(scheduler.timesteps, desc="  steps", leave=False)):
         sigma     = scheduler.sigmas[i].to(device)
         sigmas_1d = sigma.view(1).to(dtype=dtype)
+
+        if blend:
+            # Overwrite outside-mask with original noised to the current sigma.
+            noised_bg = (1.0 - sigma) * x0_bg + sigma * noise
+            latents   = mask_lat * latents + (1.0 - mask_lat) * noised_bg
 
         block_samples, null_enc_hs, null_pooled = controlnet(
             noisy_latent=latents,
@@ -131,6 +155,8 @@ def run_sampling(
 
         latents = scheduler.step(v_pred, t, latents, return_dict=False)[0]
 
+    # BLD: per-step blending IS the diffusion process — no post-hoc composite.
+    # The decoded image is already the harmonized full result.
     image = vae.decode(latents)
     return (image.float().clamp(-1, 1) + 1) / 2
 
@@ -139,25 +165,33 @@ def run_sampling(
 # Input collection
 # ---------------------------------------------------------------------------
 
-def collect_pairs(sketch_arg: str, matte_arg: str | None) -> list[tuple[Path, Path | None, str]]:
+def _match_in_dir(dir_arg: str | None, stem: str) -> Path | None:
+    if not dir_arg:
+        return None
+    d = Path(dir_arg)
+    for ext in (".png", ".jpg"):
+        cand = d / (stem + ext)
+        if cand.exists():
+            return cand
+    return None
+
+
+def collect_pairs(
+    sketch_arg: str,
+    matte_arg: str | None,
+    image_arg: str | None = None,
+) -> list[tuple[Path, Path | None, Path | None, str]]:
     sketch_path = Path(sketch_arg)
     if sketch_path.is_dir():
         files = sorted(sketch_path.glob("*.png")) + sorted(sketch_path.glob("*.jpg"))
-        pairs = []
-        for sf in files:
-            mf = None
-            if matte_arg:
-                md = Path(matte_arg)
-                for ext in (".png", ".jpg"):
-                    cand = md / (sf.stem + ext)
-                    if cand.exists():
-                        mf = cand
-                        break
-            pairs.append((sf, mf, sf.stem))
-        return pairs
+        return [
+            (sf, _match_in_dir(matte_arg, sf.stem), _match_in_dir(image_arg, sf.stem), sf.stem)
+            for sf in files
+        ]
     else:
         mf = Path(matte_arg) if matte_arg else None
-        return [(sketch_path, mf, sketch_path.stem)]
+        bf = Path(image_arg) if image_arg else None
+        return [(sketch_path, mf, bf, sketch_path.stem)]
 
 
 # ---------------------------------------------------------------------------
@@ -168,6 +202,12 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--sketch",       default="dataset/braid/sketch/test/")
     parser.add_argument("--matte",        default="dataset/braid/matte/test/")
+    parser.add_argument("--image",        default=None,
+                        help="원본 사진(배경) 경로/디렉토리. 주면 매 스텝 latent blending(RePaint) 수행.")
+    parser.add_argument("--no_blend",     action="store_true",
+                        help="--image를 줘도 blending 끄고 검은 배경 머리패치만 생성.")
+    parser.add_argument("--no_composite", action="store_true",
+                        help="최종 feathered 픽셀 합성 끄기 (순수 BLD 출력, eval Pass A용).")
     parser.add_argument("--forward_ckpt", default="checkpoints/inverse_stage3/last_controlnet.pth")
     parser.add_argument("--config",       default="configs/inverse_stage3.yaml")
     parser.add_argument("--num_steps",    type=int, default=20)
@@ -215,10 +255,13 @@ def main():
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    pairs = collect_pairs(args.sketch, args.matte)
-    print(f"\n{len(pairs)}개 이미지 처리 → {output_dir}\n")
+    blend_on = bool(args.image) and not args.no_blend
+    image_arg = args.image if blend_on else None
+    pairs = collect_pairs(args.sketch, args.matte, image_arg)
+    print(f"\n{len(pairs)}개 이미지 처리 → {output_dir}"
+          f"  (latent blending: {'ON' if blend_on else 'OFF'})\n")
 
-    for sketch_path, matte_path, stem in pairs:
+    for sketch_path, matte_path, image_path, stem in pairs:
         sketch = load_sketch(sketch_path)
 
         if matte_path and matte_path.exists():
@@ -228,11 +271,25 @@ def main():
                 print(f"  [{stem}] matte 없음: {matte_path} → sketch 전경으로 대체")
             matte = (sketch.mean(dim=1, keepdim=True) > 0.05).float()
 
+        bg_image = None
+        if blend_on:
+            if image_path and image_path.exists():
+                bg_image = load_sketch(image_path)  # RGB [0,1] loader
+            else:
+                print(f"  [{stem}] 배경 이미지 없음: {image_path} → blending 생략")
+
         print(f"  {stem}: 샘플링 중 ({args.num_steps} steps)...")
         hair_recon = run_sampling(
             controlnet, transformer, vae, scheduler,
             sketch, matte, args.num_steps, device, dtype,
+            bg_image=bg_image,
         )
+
+        # 최종 합성: 마스크 바깥 = 원본 픽셀 고정 (soft matte feather). 기본 ON.
+        if bg_image is not None and not args.no_composite:
+            m = matte.to(device=hair_recon.device, dtype=hair_recon.dtype)
+            f = bg_image.to(device=hair_recon.device, dtype=hair_recon.dtype)
+            hair_recon = hair_recon * m + f * (1.0 - m)
 
         out_path = output_dir / f"{stem}_hairpatch.png"
         to_pil(hair_recon.cpu()).save(out_path)

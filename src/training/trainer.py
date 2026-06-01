@@ -82,6 +82,11 @@ class Trainer:
         self.phase = config["training"]["phase"]
         assert self.phase in ("pretrain", "finetune"), f"Unknown phase: {self.phase}"
 
+        # Forward mode: train on full image (background incl.) instead of hair-on-black.
+        # Enables inference-time latent blending (RePaint) so the model learns to
+        # harmonize hair edges against a real surrounding context, not pure black.
+        self.full_image_target = config["training"].get("full_image_target", False)
+
         # Inverse task self-distillation
         self.inverse_mode = config["training"].get("mode", "forward") == "inverse"
         self.w_cycle      = config["training"]["loss_weights"].get("cycle", 0.0)
@@ -107,6 +112,7 @@ class Trainer:
             w_lpips=config["training"]["loss_weights"].get("lpips", 0.1),
             w_edge=config["training"]["loss_weights"].get("edge", 0.0),
             lpips_warmup_frac=config["training"]["loss_weights"].get("lpips_warmup_frac", 0.3),
+            flow_outside_weight=config["training"]["loss_weights"].get("outside", 0.1),
         ).to(self.accelerator.device)
 
         self.ema = EMAModel(
@@ -410,7 +416,12 @@ class Trainer:
             loss_mask   = stroke_mask
         else:
             cond_image  = batch["sketch"]   # sketch as conditioning signal
-            target      = batch["target"]   # generate hair region (img × matte)
+            # full_image_target: latents carry the real background so inside-mask
+            # hair denoising attends to realistic surroundings. Loss stays matte-
+            # weighted (FlowMatchingLoss outside=0.1, LPIPS/edge masked), so the
+            # background is only lightly supervised — it is overwritten by latent
+            # blending at inference anyway.
+            target      = batch["img"] if self.full_image_target else batch["target"]
             loss_mask   = matte
 
         with self.accelerator.accumulate(self.controlnet):
@@ -553,7 +564,7 @@ class Trainer:
         for batch in self.val_loader:
             sketch = batch["sketch"]
             matte  = batch["matte"]
-            target = batch["target"]
+            target = batch["img"] if self.full_image_target else batch["target"]
 
             device = self.accelerator.device
             B = target.shape[0]
