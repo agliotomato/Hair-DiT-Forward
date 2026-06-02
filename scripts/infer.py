@@ -47,12 +47,12 @@ def deep_merge(base: dict, override: dict) -> dict:
 
 
 def load_config(config_path: str) -> dict:
+    """Load YAML config, recursively merging base configs (N-level inheritance)."""
     with open(config_path) as f:
         cfg = yaml.safe_load(f)
     base_path = cfg.pop("base", None)
     if base_path:
-        with open(base_path) as f:
-            base_cfg = yaml.safe_load(f)
+        base_cfg = load_config(base_path)  # recursive: handles chained base configs
         cfg = deep_merge(base_cfg, cfg)
     return cfg
 
@@ -71,25 +71,26 @@ def run_sampling(
     matte: torch.Tensor,    # (1, 1, 512, 512) [0,1]
     num_steps: int,
     device: torch.device,
+    dtype: torch.dtype = torch.bfloat16,
 ) -> torch.Tensor:
     """Flow matching reverse sampling. Returns (1, 3, 512, 512) in [0, 1]."""
     scheduler.set_timesteps(num_steps, device=device)
 
-    latents = torch.randn(1, 16, 64, 64, device=device, dtype=torch.bfloat16)
+    latents = torch.randn(1, 16, 64, 64, device=device, dtype=dtype)
 
     for i, t in enumerate(tqdm(scheduler.timesteps, desc="steps", leave=False)):
         sigma = scheduler.sigmas[i].to(device)
-        sigmas_1d = sigma.view(1).to(dtype=torch.bfloat16)
+        sigmas_1d = sigma.view(1).to(dtype=dtype)
 
         block_samples, null_enc_hs, null_pooled = controlnet(
             noisy_latent=latents,
-            sketch=sketch.to(device=device, dtype=torch.bfloat16),
-            matte=matte.to(device=device, dtype=torch.bfloat16),
+            sketch=sketch.to(device=device, dtype=dtype),
+            matte=matte.to(device=device, dtype=dtype),
             sigmas=sigmas_1d,
         )
-        block_samples = [s.to(dtype=torch.bfloat16) for s in block_samples]
-        null_enc_hs   = null_enc_hs.to(dtype=torch.bfloat16)
-        null_pooled   = null_pooled.to(dtype=torch.bfloat16)
+        block_samples = [s.to(dtype=dtype) for s in block_samples]
+        null_enc_hs   = null_enc_hs.to(dtype=dtype)
+        null_pooled   = null_pooled.to(dtype=dtype)
 
         v_pred = transformer(
             hidden_states=latents,
@@ -151,6 +152,9 @@ def main():
 
     cfg = load_config(args.config)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # bf16 conv kernels are slow/unsupported on CPU → fall back to fp32 there.
+    dtype = torch.bfloat16 if device.type == "cuda" else torch.float32
+    print(f"Device: {device}, dtype: {dtype}")
     model_id = cfg["model"]["model_id"]
     local_files_only = cfg.get("local_files_only", False)
     output_dir = Path(args.output_dir)
@@ -159,7 +163,7 @@ def main():
     print("Loading VAE...")
     vae = VAEWrapper.from_pretrained(
         model_id=model_id,
-        torch_dtype=torch.bfloat16,
+        torch_dtype=dtype,
         local_files_only=local_files_only,
     ).to(device).eval()
 
@@ -167,7 +171,7 @@ def main():
     transformer = SD3Transformer2DModel.from_pretrained(
         model_id,
         subfolder="transformer",
-        torch_dtype=torch.bfloat16,
+        torch_dtype=dtype,
         local_files_only=local_files_only,
     ).to(device).eval()
 
@@ -180,7 +184,7 @@ def main():
     )
     ckpt = torch.load(args.checkpoint, map_location="cpu")
     controlnet.load_state_dict(ckpt["controlnet"])
-    controlnet = controlnet.to(device=device, dtype=torch.bfloat16).eval()
+    controlnet = controlnet.to(device=device, dtype=dtype).eval()
 
     scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
         model_id, subfolder="scheduler", local_files_only=local_files_only,
@@ -207,6 +211,7 @@ def main():
             matte=matte,
             num_steps=args.num_steps,
             device=device,
+            dtype=dtype,
         )
 
         gen_cpu  = gen.cpu()

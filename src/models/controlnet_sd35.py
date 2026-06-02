@@ -4,10 +4,11 @@ HairControlNet: SD3.5 ControlNet for hair region generation.
 Architecture (final spec):
   ctrl_cond = cat(sketch_latent[16ch], matte_downsampled[1ch])  → 17ch total
   - No MatteCNN. Matte is downsampled via bilinear interpolation only.
-  - 12 ControlNet blocks, initialized from even-indexed transformer blocks (0,2,4,...,22).
-    · pos_embed_input (17ch): 16ch copied from transformer pos_embed, 1ch zero-initialized.
+  - 12 ControlNet blocks, depth-aligned warm-start from transformer blocks 0,2,...,22.
+    Block i injects at transformer depth 2i, so it is initialized from block 2i.
+    pos_embed_input is 17ch, zero-initialized (zero-conv).
   - Injection: 12 residuals → 24 transformer blocks via stride=2 (diffusers built-in).
-    · residual[i] injected into transformer blocks 2i and 2i+1.
+    · residual[i] injected into transformer blocks 2i and 2i+1 (full-depth coverage).
 
 Forward:
   inputs: noisy_latent (B,16,64,64), sketch (B,3,512,512), matte (B,1,512,512), sigmas (B,)
@@ -102,9 +103,6 @@ class HairControlNet(nn.Module):
     NULL_ENC_SHAPE    = (1, 333, 4096)
     NULL_POOLED_SHAPE = (1, 2048)
 
-    # SD3.5 medium has 24 transformer blocks; 12 ControlNet blocks use even indices 0,2,...,22
-    TRANSFORMER_NUM_BLOCKS = 24
-
     def __init__(
         self,
         model_id: str,
@@ -123,24 +121,30 @@ class HairControlNet(nn.Module):
             local_files_only=local_files_only,
         )
 
-        # extra_conditioning_channels=1 → pos_embed_input expects 17ch.
-        # Diffusers copies 16ch from transformer pos_embed and zero-inits the extra 1ch.
+        # from_transformer does TWO things we rely on:
+        #   - pos_embed_input is 17ch (num_extra_conditioning_channels=1 default:
+        #     16ch sketch latent + 1ch matte), zero-initialized (standard zero-conv).
+        #   - sequentially warm-starts ControlNet blocks 0..11 from transformer 0..11
+        #     (all dual → full copy). We keep this as the baseline, then override below.
         self.controlnet = SD3ControlNetModel.from_transformer(
             transformer,
             num_layers=num_layers,
             load_weights_from_transformer=True,
-            # num_extra_conditioning_channels defaults to 1 → 17ch input (16ch sketch + 1ch matte)
         )
 
-        # Override block weights: use even-indexed transformer blocks (0, 2, 4, ..., 22)
-        # instead of the sequential 0..11 that from_transformer copies.
-        assert self.TRANSFORMER_NUM_BLOCKS >= num_layers * 2, (
-            f"Need >= {num_layers * 2} transformer blocks for stride-2 even init, "
-            f"got {self.TRANSFORMER_NUM_BLOCKS}."
+        # Depth-aligned re-init: ControlNet block i produces residual[i], which diffusers
+        # injects into transformer blocks 2i, 2i+1 (interval_control = 24/12 = 2). So block
+        # i sits at relative depth i/12 == 2i/24, the same depth as its injection point.
+        # Warm-start block i from transformer block 2i so its init matches that depth.
+        #
+        # shape-filtered copy: SD3.5 uses dual attention only in shallow blocks, so deep
+        # even sources (14,16,...,22) lack attn2 / the larger norm1. Those keys simply
+        # don't overwrite — the block retains the sequential from_transformer values
+        # (real trained weights from block i), so NOTHING is freshly initialized.
+        n_tf = len(transformer.transformer_blocks)
+        assert n_tf >= num_layers * 2, (
+            f"Need >= {num_layers * 2} transformer blocks for stride-2 even init, got {n_tf}."
         )
-        # Copy matching weights from even-indexed transformer blocks.
-        # ControlNet blocks have extra/larger layers vs transformer blocks;
-        # copy only keys that exist in both with identical shapes.
         for i, cn_block in enumerate(self.controlnet.transformer_blocks):
             src_sd = transformer.transformer_blocks[i * 2].state_dict()
             tgt_sd = cn_block.state_dict()
