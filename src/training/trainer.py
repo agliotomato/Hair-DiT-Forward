@@ -2,7 +2,7 @@
 Trainer for SD3.5 ControlNet hair region generation.
 
 Holds:
-  - HairControlNet (trainable): ControlNet + MatteCNN + learned null embeddings
+  - HairControlNet (trainable): ControlNet + learned null embeddings
   - SD3Transformer2DModel (frozen): generates velocity predictions via ControlNet residuals
   - VAEWrapper SD3.5 (frozen): 16-channel latents
   - FlowMatchEulerDiscreteScheduler: flow matching noise schedule

@@ -1,4 +1,4 @@
-from .controlnet_sd35 import HairControlNet, MatteCNN
+from .controlnet_sd35 import HairControlNet
 from .vae_wrapper import VAEWrapper
 
-__all__ = ["HairControlNet", "MatteCNN", "VAEWrapper"]
+__all__ = ["HairControlNet", "VAEWrapper"]
