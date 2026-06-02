@@ -138,9 +138,13 @@ class HairControlNet(nn.Module):
             f"Need >= {num_layers * 2} transformer blocks for stride-2 even init, "
             f"got {self.TRANSFORMER_NUM_BLOCKS}."
         )
+        # Copy matching weights from even-indexed transformer blocks.
+        # strict=False: ControlNet blocks have extra layers (attn2, larger norms)
+        # that don't exist in transformer blocks — those stay at initialized values.
         for i, cn_block in enumerate(self.controlnet.transformer_blocks):
             cn_block.load_state_dict(
-                transformer.transformer_blocks[i * 2].state_dict()
+                transformer.transformer_blocks[i * 2].state_dict(),
+                strict=False,
             )
 
         del transformer
