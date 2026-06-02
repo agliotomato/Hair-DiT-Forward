@@ -47,7 +47,7 @@ from tqdm import tqdm
 from src.data.augmentation import build_augmentation_pipeline
 from src.data.dataset import HairRegionDataset
 from src.data.utils import resize_matte_to_latent
-from src.models.controlnet_sd35 import HairControlNet
+from src.models.controlnet_sd35 import HairControlNet, make_token_gate
 from src.models.vae_wrapper import VAEWrapper
 from src.training.ema import EMAModel
 from src.training.losses import HairLoss
@@ -84,6 +84,7 @@ class Trainer:
 
         # Inverse task self-distillation
         self.inverse_mode = config["training"].get("mode", "forward") == "inverse"
+        self.matte_gate   = config["training"].get("matte_gate", False)
         self.w_cycle      = config["training"]["loss_weights"].get("cycle", 0.0)
         self.cycle_start  = config["training"].get("cycle_start", 9999)
         self.w_sketch_dec = config["training"]["loss_weights"].get("sketch_decoder", 0.0)
@@ -448,6 +449,12 @@ class Trainer:
             null_enc_hs   = null_enc_hs.to(dtype=torch.bfloat16)
             null_pooled   = null_pooled.to(dtype=torch.bfloat16)
 
+            if self.matte_gate:
+                token_gate = make_token_gate(
+                    matte, block_samples[0].shape[1], device, torch.bfloat16
+                )
+                block_samples = [s * token_gate for s in block_samples]
+
             # 6. Frozen transformer forward with ControlNet residuals
             # NOTE: do NOT use torch.no_grad() here.
             # Transformer parameters are frozen via requires_grad_(False),
@@ -576,6 +583,12 @@ class Trainer:
             block_samples = [s.to(dtype=torch.bfloat16) for s in block_samples]
             null_enc_hs   = null_enc_hs.to(dtype=torch.bfloat16)
             null_pooled   = null_pooled.to(dtype=torch.bfloat16)
+
+            if self.matte_gate:
+                token_gate = make_token_gate(
+                    matte, block_samples[0].shape[1], device, torch.bfloat16
+                )
+                block_samples = [s * token_gate for s in block_samples]
 
             v_pred = self.transformer(
                 hidden_states=noisy_latents,

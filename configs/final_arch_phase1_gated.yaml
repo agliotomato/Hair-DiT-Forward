@@ -1,0 +1,11 @@
+# Final confirmed architecture — Phase 1, matte-gated training
+# ctrl_cond: cat(sketch_latent[16ch], matte_bilinear[1ch])
+# ControlNet residuals multiplied by soft matte token mask before transformer injection.
+
+base: configs/phase1_unbraid.yaml
+
+training:
+  matte_gate: true
+
+checkpointing:
+  output_dir: checkpoints/final_arch_phase1_gated/

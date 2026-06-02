@@ -1,0 +1,12 @@
+# Ablation: 16ch ctrl_cond — Phase 2 (braid fine-tuning)
+
+base: configs/phase2_braid.yaml
+
+model:
+  use_raw_matte: false   # 16ch mode
+
+training:
+  resume_from: checkpoints/ablation_16ch_phase1/best.pth
+
+checkpointing:
+  output_dir: checkpoints/ablation_16ch_phase2/
