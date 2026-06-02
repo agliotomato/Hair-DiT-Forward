@@ -24,19 +24,13 @@ from src.training.trainer import Trainer
 
 
 def load_config(config_path: str) -> dict:
-    """Load YAML config, merging with base config if specified."""
+    """Load YAML config, recursively merging base configs."""
     with open(config_path) as f:
         cfg = yaml.safe_load(f)
-
-    # Merge with base config
     base_path = cfg.pop("base", None)
     if base_path:
-        with open(base_path) as f:
-            base_cfg = yaml.safe_load(f)
-        # Deep merge: cfg overrides base
-        merged = deep_merge(base_cfg, cfg)
-        return merged
-
+        base_cfg = load_config(base_path)  # recursive: handles N-level inheritance
+        return deep_merge(base_cfg, cfg)
     return cfg
 
 

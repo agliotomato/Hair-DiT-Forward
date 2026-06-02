@@ -1,0 +1,11 @@
+base: configs/phase2_braid.yaml
+
+model:
+  zero_matte_cond: true
+
+training:
+  matte_gate: true
+  resume_from: checkpoints/exp2_phase1/best.pth
+
+checkpointing:
+  output_dir: checkpoints/exp2_phase2/

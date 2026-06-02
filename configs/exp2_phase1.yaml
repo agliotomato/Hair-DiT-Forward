@@ -1,0 +1,10 @@
+base: configs/phase1_unbraid.yaml
+
+model:
+  zero_matte_cond: true
+
+training:
+  matte_gate: true
+
+checkpointing:
+  output_dir: checkpoints/exp2_phase1/

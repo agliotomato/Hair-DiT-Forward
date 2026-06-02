@@ -112,6 +112,7 @@ class HairControlNet(nn.Module):
         num_layers: int = 12,
         local_files_only: bool = False,
         use_sketch_decoder: bool = False,
+        zero_matte_cond: bool = False,
     ):
         super().__init__()
 
@@ -156,6 +157,7 @@ class HairControlNet(nn.Module):
             torch.zeros(*self.NULL_POOLED_SHAPE)
         )
 
+        self.zero_matte_cond = zero_matte_cond
         self._vae = vae
 
     def _build_ctrl_cond(
@@ -182,6 +184,8 @@ class HairControlNet(nn.Module):
             mode="bilinear",
             align_corners=False,
         )  # (B, 1, 64, 64)
+        if self.zero_matte_cond:
+            matte_latent = torch.zeros_like(matte_latent)
 
         return torch.cat([img_latent, matte_latent], dim=1)  # (B, 17, 64, 64)
 
