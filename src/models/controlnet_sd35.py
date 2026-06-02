@@ -139,13 +139,17 @@ class HairControlNet(nn.Module):
             f"got {self.TRANSFORMER_NUM_BLOCKS}."
         )
         # Copy matching weights from even-indexed transformer blocks.
-        # strict=False: ControlNet blocks have extra layers (attn2, larger norms)
-        # that don't exist in transformer blocks — those stay at initialized values.
+        # ControlNet blocks have extra/larger layers vs transformer blocks;
+        # copy only keys that exist in both with identical shapes.
         for i, cn_block in enumerate(self.controlnet.transformer_blocks):
-            cn_block.load_state_dict(
-                transformer.transformer_blocks[i * 2].state_dict(),
-                strict=False,
-            )
+            src_sd = transformer.transformer_blocks[i * 2].state_dict()
+            tgt_sd = cn_block.state_dict()
+            transferable = {
+                k: v for k, v in src_sd.items()
+                if k in tgt_sd and v.shape == tgt_sd[k].shape
+            }
+            tgt_sd.update(transferable)
+            cn_block.load_state_dict(tgt_sd)
 
         del transformer
         torch.cuda.empty_cache()
