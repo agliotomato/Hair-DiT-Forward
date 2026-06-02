@@ -6,6 +6,8 @@ model:
 training:
   matte_gate: false
   resume_from: checkpoints/exp4_phase1/final.pth
+  batch_size: 16
+  gradient_accumulation_steps: 1
 
 checkpointing:
   output_dir: checkpoints/exp4_phase2/
