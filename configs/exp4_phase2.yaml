@@ -5,7 +5,8 @@ model:
 
 training:
   matte_gate: false
-  resume_from: checkpoints/exp4_phase1/best.pth
+  resume_from: checkpoints/exp4_phase1/final.pth
 
 checkpointing:
   output_dir: checkpoints/exp4_phase2/
+  save_every: 10

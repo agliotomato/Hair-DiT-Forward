@@ -2,6 +2,9 @@ base: configs/phase1_unbraid.yaml
 
 training:
   matte_gate: true
+  batch_size: 16
+  gradient_accumulation_steps: 1
 
 checkpointing:
   output_dir: checkpoints/exp1_phase1/
+  save_every: 10

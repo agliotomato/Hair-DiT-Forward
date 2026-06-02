@@ -2,7 +2,8 @@ base: configs/phase2_braid.yaml
 
 training:
   matte_gate: true
-  resume_from: checkpoints/exp1_phase1/best.pth
+  resume_from: checkpoints/exp1_phase1/final.pth
 
 checkpointing:
   output_dir: checkpoints/exp1_phase2/
+  save_every: 10
