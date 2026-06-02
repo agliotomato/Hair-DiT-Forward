@@ -129,7 +129,7 @@ class HairControlNet(nn.Module):
             transformer,
             num_layers=num_layers,
             load_weights_from_transformer=True,
-            extra_conditioning_channels=1,
+            # num_extra_conditioning_channels defaults to 1 → 17ch input (16ch sketch + 1ch matte)
         )
 
         # Override block weights: use even-indexed transformer blocks (0, 2, 4, ..., 22)
