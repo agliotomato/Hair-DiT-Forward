@@ -60,6 +60,7 @@ SPLITS = {
         "matte":  ROOT / "dataset/unbraid/matte/test",
         "sketch": ROOT / "dataset/unbraid/sketch/test",
     },
+    "combined": None,  # braid + unbraid 합산 — --pred braid_dir unbraid_dir 순서로 2개 지정
 }
 
 # ---------------------------------------------------------------------------
@@ -422,59 +423,25 @@ def discover_stems(pred_dir: Path, gt_dir: Path, suffix: str) -> list[str]:
     return sorted(common)
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Evaluate braid/unbraid split.")
-    parser.add_argument("--split",        required=True,  choices=list(SPLITS.keys()),
-                        help="'braid' or 'unbraid'")
-    parser.add_argument("--pred",         required=True,  help="생성 이미지 디렉토리")
-    parser.add_argument("--pred-suffix",  default="",
-                        help="pred 파일명 접미사 (예: _full  →  stem_full.png)")
-    parser.add_argument("--out",          default=None,
-                        help="출력 경로 prefix (기본: eval_results/{split}_{pred_dir_name})")
-    parser.add_argument("--tag",          default=None,
-                        help="결과 테이블 컬럼 레이블 (기본: pred 폴더 이름)")
-    args = parser.parse_args()
-
-    ds     = SPLITS[args.split]
+def _process_split(
+    split_name: str,
+    pred_dir: Path,
+    suffix: str,
+) -> tuple[list[dict], list, list, list, list]:
+    """단일 split 평가. (rows, fid_hr, fid_hf, fid_br, fid_bf) 반환."""
+    ds     = SPLITS[split_name]
     gt_dir = ds["img"]
     mt_dir = ds["matte"]
     sk_dir = ds["sketch"]
 
-    for name, d in [("GT", gt_dir), ("matte", mt_dir), ("sketch", sk_dir)]:
-        if not d.exists():
-            print(f"[ERROR] {name} 디렉토리 없음: {d}")
-            sys.exit(1)
-
-    pred_dir = Path(args.pred)
-    if not pred_dir.exists():
-        print(f"[ERROR] pred 디렉토리 없음: {pred_dir}")
-        sys.exit(1)
-
-    suffix = args.pred_suffix
-    tag    = args.tag or pred_dir.name
-    out    = Path(args.out) if args.out else ROOT / "eval_results" / f"{args.split}_{pred_dir.name}"
-    out.parent.mkdir(parents=True, exist_ok=True)
-
-    print(f"split  : {args.split}")
-    print(f"pred   : {pred_dir}")
-    print(f"suffix : '{suffix}'")
-    print(f"gt     : {gt_dir}")
-    print(f"matte  : {mt_dir}")
-    print(f"sketch : {sk_dir}")
-    print(f"out    : {out}_*")
-
-    try_load_face_model()
-
     stems = discover_stems(pred_dir, gt_dir, suffix)
-    print(f"\n{len(stems)}개 이미지 평가 시작")
-    if len(stems) < 500:
-        print(f"[WARNING] FID 신뢰도 낮음 (권장 500장 이상, 현재 {len(stems)}장)")
+    print(f"  [{split_name}] {len(stems)}개")
 
     rows = []
     fid_hr, fid_hf = [], []
     fid_br, fid_bf = [], []
 
-    for stem in tqdm(stems, desc=f"[{args.split}]"):
+    for stem in tqdm(stems, desc=f"[{split_name}]"):
         pred_name = f"{stem}{suffix}.png" if suffix else f"{stem}.png"
         pred_path = pred_dir / pred_name
 
@@ -494,8 +461,7 @@ def main():
         sk_e   = canny_edges(sk)
         hair   = matte > 127
         bnd    = get_boundary_mask(matte)
-
-        gq = gen_quality_metrics(pred, gt, matte)
+        gq     = gen_quality_metrics(pred, gt, matte)
 
         rows.append({
             "stem":         stem,
@@ -515,7 +481,10 @@ def main():
         fid_br.append(extract_region_crop(gt,   bnd, min_px=16))
         fid_bf.append(extract_region_crop(pred, bnd, min_px=16))
 
-    # FID
+    return rows, fid_hr, fid_hf, fid_br, fid_bf
+
+
+def _finalize(rows, fid_hr, fid_hf, fid_br, fid_bf, split_name, tag, out):
     print("\nFID 계산 중...")
     fid = {
         "hair_fid": compute_fid([x for x in fid_hr if x is not None],
@@ -527,16 +496,15 @@ def main():
     print(f"  Bnd  FID: {_fmt(fid['bnd_fid'])}")
 
     valid = [r for r in rows if r.get("psnr") is not None]
-    print_table(valid, fid, args.split, tag, len(valid))
+    print_table(valid, fid, split_name, tag, len(valid))
     print_latex(valid, fid, tag)
 
-    # Per-image CSV
     per_path = Path(f"{out}_per_image.csv")
     with open(per_path, "w", newline="") as f:
-        csv.DictWriter(f, fieldnames=["stem"] + PER_IMAGE_KEYS).writeheader()
-        csv.DictWriter(f, fieldnames=["stem"] + PER_IMAGE_KEYS).writerows(rows)
+        w = csv.DictWriter(f, fieldnames=["stem"] + PER_IMAGE_KEYS)
+        w.writeheader()
+        w.writerows(rows)
 
-    # Summary CSV
     sum_path = Path(f"{out}_summary.csv")
     with open(sum_path, "w", newline="") as f:
         w = csv.writer(f)
@@ -547,6 +515,80 @@ def main():
                 w.writerow([label, _fmt(v)])
 
     print(f"\n저장 완료:\n  {per_path}\n  {sum_path}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Evaluate braid/unbraid/combined split.")
+    parser.add_argument("--split",       required=True, choices=list(SPLITS.keys()),
+                        help="'braid', 'unbraid', 'combined'")
+    parser.add_argument("--pred",        required=True, nargs="+",
+                        help="생성 이미지 디렉토리. combined는 'braid_dir unbraid_dir' 순서로 2개 지정")
+    parser.add_argument("--pred-suffix", default="",
+                        help="pred 파일명 접미사 (예: _full  →  stem_full.png)")
+    parser.add_argument("--out",         default=None,
+                        help="출력 경로 prefix (기본: eval_results/{split}_{pred_dir_name})")
+    parser.add_argument("--tag",         default=None,
+                        help="결과 테이블 컬럼 레이블")
+    args = parser.parse_args()
+
+    suffix = args.pred_suffix
+    try_load_face_model()
+
+    if args.split == "combined":
+        if len(args.pred) != 2:
+            print("[ERROR] --split combined은 --pred를 2개 지정해야 합니다 (braid_dir unbraid_dir 순서)")
+            sys.exit(1)
+        braid_dir   = Path(args.pred[0])
+        unbraid_dir = Path(args.pred[1])
+        for p in [braid_dir, unbraid_dir]:
+            if not p.exists():
+                print(f"[ERROR] pred 디렉토리 없음: {p}")
+                sys.exit(1)
+
+        tag = args.tag or f"{braid_dir.name}+{unbraid_dir.name}"
+        out = Path(args.out) if args.out else ROOT / "eval_results" / f"combined_{braid_dir.name}"
+        out.parent.mkdir(parents=True, exist_ok=True)
+
+        print(f"split  : combined (braid + unbraid)")
+        print(f"pred   : {braid_dir}  |  {unbraid_dir}")
+        print(f"suffix : '{suffix}'")
+        print(f"out    : {out}_*\n")
+
+        print("braid 처리 중...")
+        r_b, hr_b, hf_b, br_b, bf_b = _process_split("braid",   braid_dir,   suffix)
+        print("unbraid 처리 중...")
+        r_u, hr_u, hf_u, br_u, bf_u = _process_split("unbraid", unbraid_dir, suffix)
+
+        rows   = r_b  + r_u
+        fid_hr = hr_b + hr_u
+        fid_hf = hf_b + hf_u
+        fid_br = br_b + br_u
+        fid_bf = bf_b + bf_u
+
+        _finalize(rows, fid_hr, fid_hf, fid_br, fid_bf, "combined", tag, out)
+
+    else:
+        if len(args.pred) != 1:
+            print("[ERROR] braid/unbraid split은 --pred를 1개만 지정하세요")
+            sys.exit(1)
+        pred_dir = Path(args.pred[0])
+        if not pred_dir.exists():
+            print(f"[ERROR] pred 디렉토리 없음: {pred_dir}")
+            sys.exit(1)
+
+        tag = args.tag or pred_dir.name
+        out = Path(args.out) if args.out else ROOT / "eval_results" / f"{args.split}_{pred_dir.name}"
+        out.parent.mkdir(parents=True, exist_ok=True)
+
+        ds = SPLITS[args.split]
+        print(f"split  : {args.split}")
+        print(f"pred   : {pred_dir}")
+        print(f"suffix : '{suffix}'")
+        print(f"gt     : {ds['img']}")
+        print(f"out    : {out}_*\n")
+
+        rows, fid_hr, fid_hf, fid_br, fid_bf = _process_split(args.split, pred_dir, suffix)
+        _finalize(rows, fid_hr, fid_hf, fid_br, fid_bf, args.split, tag, out)
 
 
 if __name__ == "__main__":
