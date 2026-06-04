@@ -535,22 +535,31 @@ def main():
     try_load_face_model()
 
     if args.split == "combined":
-        if len(args.pred) != 2:
-            print("[ERROR] --split combined은 --pred를 2개 지정해야 합니다 (braid_dir unbraid_dir 순서)")
-            sys.exit(1)
-        braid_dir   = Path(args.pred[0])
-        unbraid_dir = Path(args.pred[1])
-        for p in [braid_dir, unbraid_dir]:
-            if not p.exists():
-                print(f"[ERROR] pred 디렉토리 없음: {p}")
+        if len(args.pred) == 1:
+            # 단일 폴더: braid/unbraid GT stem과 교차하여 자동 분리
+            single_dir = Path(args.pred[0])
+            if not single_dir.exists():
+                print(f"[ERROR] pred 디렉토리 없음: {single_dir}")
                 sys.exit(1)
+            braid_dir   = single_dir
+            unbraid_dir = single_dir
+        elif len(args.pred) == 2:
+            braid_dir   = Path(args.pred[0])
+            unbraid_dir = Path(args.pred[1])
+            for p in [braid_dir, unbraid_dir]:
+                if not p.exists():
+                    print(f"[ERROR] pred 디렉토리 없음: {p}")
+                    sys.exit(1)
+        else:
+            print("[ERROR] --split combined은 --pred를 1개(단일 폴더) 또는 2개(braid unbraid) 지정하세요")
+            sys.exit(1)
 
-        tag = args.tag or f"{braid_dir.name}+{unbraid_dir.name}"
+        tag = args.tag or braid_dir.name
         out = Path(args.out) if args.out else ROOT / "eval_results" / f"combined_{braid_dir.name}"
         out.parent.mkdir(parents=True, exist_ok=True)
 
         print(f"split  : combined (braid + unbraid)")
-        print(f"pred   : {braid_dir}  |  {unbraid_dir}")
+        print(f"pred   : {braid_dir}" + (f"  |  {unbraid_dir}" if braid_dir != unbraid_dir else " (단일 폴더, 자동 분리)"))
         print(f"suffix : '{suffix}'")
         print(f"out    : {out}_*\n")
 
