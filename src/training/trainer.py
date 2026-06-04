@@ -2,7 +2,7 @@
 Trainer for SD3.5 ControlNet hair region generation.
 
 Holds:
-  - HairControlNet (trainable): ControlNet + MatteCNN + learned null embeddings
+  - HairControlNet (trainable): ControlNet + learned null embeddings
   - SD3Transformer2DModel (frozen): generates velocity predictions via ControlNet residuals
   - VAEWrapper SD3.5 (frozen): 16-channel latents
   - FlowMatchEulerDiscreteScheduler: flow matching noise schedule
@@ -417,10 +417,10 @@ class Trainer:
         else:
             cond_image  = batch["sketch"]   # sketch as conditioning signal
             # full_image_target: latents carry the real background so inside-mask
-            # hair denoising attends to realistic surroundings. Loss stays matte-
-            # weighted (FlowMatchingLoss outside=0.1, LPIPS/edge masked), so the
-            # background is only lightly supervised — it is overwritten by latent
-            # blending at inference anyway.
+            # hair denoising attends to realistic surroundings. Loss is masked to
+            # the matte (FlowMatchingLoss outside weight from config; LPIPS/edge
+            # masked). The fullimg configs set outside=0.0 → background is NOT
+            # supervised — it is overwritten by BLD latent blending at inference.
             target      = batch["img"] if self.full_image_target else batch["target"]
             loss_mask   = matte
 
