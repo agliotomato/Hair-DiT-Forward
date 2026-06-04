@@ -127,4 +127,7 @@ ctrl_cond 구성
 - raw_matte : 1채널
 
 ControlNet 구성
-- front12개
+- front12
+
+
+hyuntaek
