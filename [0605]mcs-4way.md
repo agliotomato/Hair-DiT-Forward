@@ -21,11 +21,11 @@ unbraid 40epoch 학습 후 braid **40epoch** 학습 결과
 | ![](results/report/sketch_test__braid_2539.png) | ![](results/report/img_test__braid_2539.png) | ![](results/report/mcs1_braid__braid_2539.png) | ![](results/report/mcs2_braid__braid_2539.png) | ![](results/report/mcs3_braid__braid_2539.png) | ![](results/report/mcs4_braid__braid_2539.png) |
 
 unbraid 40epoch 학습 후 braid **50epoch** 학습 결과
-| Sketch | GT | mcs1 | mcs3 |
-|:---:|:---:|:---:|:---:|
-| ![](results/report/sketch_test__braid_2534.png) | ![](results/report/img_test__braid_2534.png) | ![](results/report/mcs1_braid_50__braid_2534.png) | ![](results/report/mcs3_braid_50__braid_2534.png) |
-| ![](results/report/sketch_test__braid_2537.png) | ![](results/report/img_test__braid_2537.png) | ![](results/report/mcs1_braid_50__braid_2537.png) | ![](results/report/mcs3_braid_50__braid_2537.png) |
-| ![](results/report/sketch_test__braid_2539.png) | ![](results/report/img_test__braid_2539.png) | ![](results/report/mcs1_braid_50__braid_2539.png) | ![](results/report/mcs3_braid_50__braid_2539.png) |
+| Sketch | GT | mcs1 | mcs2 | mcs3 | mcs4 |
+|:---:|:---:|:---:|:---:|:---:|:---:|
+| ![](results/report/sketch_test__braid_2534.png) | ![](results/report/img_test__braid_2534.png) | ![](results/report/mcs1_braid_50__braid_2534.png) | ![](results/report/mcs2_braid_50__braid_2534.png) | ![](results/report/mcs3_braid_50__braid_2534.png) | ![](results/report/mcs4_braid_50__braid_2534.png) |
+| ![](results/report/sketch_test__braid_2537.png) | ![](results/report/img_test__braid_2537.png) | ![](results/report/mcs1_braid_50__braid_2537.png) | ![](results/report/mcs2_braid_50__braid_2537.png) | ![](results/report/mcs3_braid_50__braid_2537.png) | ![](results/report/mcs4_braid_50__braid_2537.png) |
+| ![](results/report/sketch_test__braid_2539.png) | ![](results/report/img_test__braid_2539.png) | ![](results/report/mcs1_braid_50__braid_2539.png) | ![](results/report/mcs2_braid_50__braid_2539.png) | ![](results/report/mcs3_braid_50__braid_2539.png) | ![](results/report/mcs4_braid_50__braid_2539.png) |
 
 
 ## 평가 결과
