@@ -4,7 +4,7 @@ Flow matching losses for SD3.5 ControlNet hair generation.
 L_total = w_flow * L_flow + w_lpips * L_lpips + w_edge * L_edge
 
 L_flow: masked MSE(v_pred, v_target) where v_target = noise - latents
-  - matte region weight=1.0, outside weight=0.1
+  - matte region weight=1.0, outside weight=0.0 (BLD: loss=0 outside matte)
 L_lpips: perceptual loss on decoded x0_pred in matte region
   - x0_pred = x_t - sigma * v_pred  (flow matching x0 recovery)
   - decoded through SD3.5 VAE
@@ -30,10 +30,10 @@ class FlowMatchingLoss(nn.Module):
     Masked MSE between predicted velocity and target velocity.
 
     v_target = noise - latents  (flow matching velocity)
-    Loss weights: matte_region=1.0, outside=outside_weight
+    Loss weights: matte_region=1.0, outside=0.0 (BLD style)
     """
 
-    def __init__(self, outside_weight: float = 0.1):
+    def __init__(self, outside_weight: float = 0.0):
         super().__init__()
         self.outside_weight = outside_weight
 
@@ -168,7 +168,7 @@ class HairLoss(nn.Module):
         self.w_edge = w_edge
         self.lpips_warmup_frac = lpips_warmup_frac
 
-        self.flow_loss = FlowMatchingLoss(outside_weight=0.1)
+        self.flow_loss = FlowMatchingLoss(outside_weight=0.0)
         self.perc_loss = PerceptualLoss()
         self.edge_loss = SketchEdgeAlignmentLoss()
 

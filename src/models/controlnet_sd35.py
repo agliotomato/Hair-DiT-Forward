@@ -7,13 +7,16 @@ Components:
 - null_encoder_hidden_states: nn.Parameter (1, 333, 4096), learned null text embedding
 - null_pooled_projections:    nn.Parameter (1, 2048), learned null pooled embedding
 
-Forward:
+Forward (zero_matte_cond=False, MCS default):
   inputs: noisy_latent (B,16,64,64), sketch (B,3,512,512), matte (B,1,512,512), sigmas (B,)
   1. sketch → frozen VAE encode → sketch_latent (B,16,64,64)
   2. matte → MatteCNN → matte_feat (B,16,64,64)
-  3. ctrl_cond = sketch_latent + matte_feat
-  4. SD3ControlNetModel forward → block_samples
-  5. return block_samples, null_encoder_hs (expanded to B), null_pooled (expanded to B)
+  3. matte → area-average downsample → matte_latent (B,1,64,64)
+  4. ctrl_cond = cat([sketch_latent + matte_feat, matte_latent], dim=1)  (B,17,64,64)
+  5. SD3ControlNetModel forward → block_samples
+  6. return block_samples, null_encoder_hs (expanded to B), null_pooled (expanded to B)
+
+zero_matte_cond=True: matte_feat and matte_latent are zeroed → ctrl_cond carries sketch only.
 """
 
 from __future__ import annotations
@@ -139,6 +142,7 @@ class HairControlNet(nn.Module):
         num_layers: int = 12,
         local_files_only: bool = False,
         use_sketch_decoder: bool = False,
+        zero_matte_cond: bool = False,
     ):
         super().__init__()
 
@@ -177,6 +181,7 @@ class HairControlNet(nn.Module):
             torch.zeros(*self.NULL_POOLED_SHAPE)
         )
 
+        self.zero_matte_cond = zero_matte_cond
         # Keep VAE reference (frozen, not a submodule to avoid double registration)
         self._vae = vae
 
@@ -214,8 +219,11 @@ class HairControlNet(nn.Module):
         #    16ch: sketch_latent + matte_feat  (structural + matte learned features)
         #     1ch: raw matte downsampled       (explicit spatial mask)
         matte_latent = F.interpolate(
-            matte.to(device=device, dtype=dtype), size=(64, 64), mode="bilinear", align_corners=False
-        )  # (B, 1, 64, 64)
+            matte.to(device=device, dtype=dtype), size=(64, 64), mode="area"
+        )  # (B, 1, 64, 64) — area avg: each pixel = mean of 8×8 region
+        if self.zero_matte_cond:
+            matte_feat   = torch.zeros_like(matte_feat)
+            matte_latent = torch.zeros_like(matte_latent)
         ctrl_cond = torch.cat([sketch_latent + matte_feat, matte_latent], dim=1)  # (B, 17, 64, 64)
 
         # 4. Expand null embeddings to batch size
@@ -264,8 +272,11 @@ class HairControlNet(nn.Module):
 
         matte_feat   = self.matte_cnn(matte.to(device=device, dtype=dtype))
         matte_latent = F.interpolate(
-            matte.to(device=device, dtype=dtype), size=(64, 64), mode="bilinear", align_corners=False
-        )
+            matte.to(device=device, dtype=dtype), size=(64, 64), mode="area"
+        )  # (B, 1, 64, 64) — area avg: each pixel = mean of 8×8 region
+        if self.zero_matte_cond:
+            matte_feat   = torch.zeros_like(matte_feat)
+            matte_latent = torch.zeros_like(matte_latent)
         ctrl_cond = torch.cat([cond_latent + matte_feat, matte_latent], dim=1)  # (B, 17, 64, 64)
 
         null_enc_hs = self.null_encoder_hidden_states.expand(B, -1, -1).to(device=device, dtype=dtype)
@@ -306,7 +317,7 @@ def make_matte_tok(matte: torch.Tensor) -> torch.Tensor:
     SD3 patchify: Conv2d(patch=2) → flatten(2).transpose(1,2)
     512px → latent 64² → patch2 → 32×32 = 1024 tokens
     """
-    tok = F.interpolate(matte, size=(32, 32), mode="bilinear", align_corners=False)
+    tok = F.interpolate(matte, size=(32, 32), mode="area")
     return tok.flatten(2).transpose(1, 2)  # (B, 1024, 1)
 
 
