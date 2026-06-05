@@ -48,16 +48,14 @@ unbraid 40epoch 학습 후 braid **40epoch** 평가 결과
 unbraid 40epoch 학습 후 braid **50epoch** 평가 결과
 | Metric | mcs1 | mcs2 | mcs3 | mcs4 |
 |--------|------|------|------|------|
-| Edge IoU ↑ | 0.0639 | x | 0.0632 | x |
-| Chamfer Dist ↓ | 4.6947 | x | 4.7713 | x |
-| Sketch LPIPS ↓ | 0.7611 | x | 0.7617 | x |
-| Hair FID ↓ | N/A | x | N/A | x |
-| LPIPS (GT) ↓ | 0.2941 | x | 0.3057 | x |
-| SSIM (GT) ↑ | 0.5899 | x | 0.5862 | x |
-| PSNR (GT) ↑ | 11.7388 | x | 11.6754 | x |
-| Boundary FID ↓ | N/A | x | N/A | x |
-| Boundary LPIPS ↓ | 0.0193 | x | 0.0213 | x |
-| Face LPIPS ↓ | 0.0032 | x | 0.0032 | x |
-| ArcFace Cos ↑ | 0.6877 | x | 0.6979 | x |
-
-> mc2, mc4는 추후 기재 예정
+| Edge IoU ↑ | 0.0639 | 0.0641 | 0.0632 | 0.0626 |
+| Chamfer Dist ↓ | 4.6947 | 4.6660 | 4.7713 | 4.8808 |
+| Sketch LPIPS ↓ | 0.7611 | 0.7704 | 0.7617 | 0.7368 |
+| Hair FID ↓ | 1.0666 | 1.5530 | 1.5522 | 1.9780 |
+| LPIPS (GT) ↓ | 0.2941 | 0.3292 | 0.3057 | 0.3266 |
+| SSIM (GT) ↑ | 0.5899 | 0.5888 | 0.5862 | 0.5918 |
+| PSNR (GT) ↑ | 11.7388 | 11.4236 | 11.6754 | 11.4673 |
+| Boundary FID ↓ | 0.0108 | 0.0162 | 0.0108 | 0.0206 |
+| Boundary LPIPS ↓ | 0.0193 | 0.0212 | 0.0213 | 0.0227 |
+| Face LPIPS ↓ | 0.0032 | 0.0037 | 0.0032 | 0.0037 |
+| ArcFace Cos ↑ | 0.6877 | 0.6682 | 0.6979 | 0.6638 |
