@@ -8,7 +8,8 @@ model:
 
 training:
   schedule: none
-  resume_from: checkpoints/mcs1_phase1/epoch_40.pth
+  resume_from: checkpoints/mcs1_phase2/epoch_40.pth
+  batch_size: 16
 
 checkpointing:
   output_dir: checkpoints/mcs1_phase2/

@@ -1,0 +1,12 @@
+metric,mcs3_50
+Edge IoU ↑,0.0632
+Chamfer Dist ↓,4.7713
+Sketch LPIPS ↓,0.7617
+Hair FID ↓,N/A
+LPIPS (GT) ↓,0.3057
+SSIM (GT) ↑,0.5862
+PSNR (GT) ↑,11.6754
+Boundary FID ↓,N/A
+Boundary LPIPS ↓,0.0213
+Face LPIPS ↓,0.0032
+ArcFace Cos ↑,0.6979

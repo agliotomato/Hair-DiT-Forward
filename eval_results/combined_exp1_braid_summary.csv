@@ -1,0 +1,12 @@
+metric,Exp1
+Edge IoU ↑,0.0637
+Chamfer Dist ↓,4.7143
+Sketch LPIPS ↓,0.7201
+Hair FID ↓,N/A
+LPIPS (GT) ↓,0.3046
+SSIM (GT) ↑,0.6024
+PSNR (GT) ↑,11.4624
+Boundary FID ↓,N/A
+Boundary LPIPS ↓,0.0069
+Face LPIPS ↓,0.0007
+ArcFace Cos ↑,0.7004

@@ -9,6 +9,7 @@ model:
 
 training:
   schedule: none
+  batch_size: 16
 
 checkpointing:
   output_dir: checkpoints/mcs3_phase1/

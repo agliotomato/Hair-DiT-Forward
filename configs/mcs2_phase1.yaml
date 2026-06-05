@@ -10,6 +10,8 @@ model:
 
 training:
   schedule: all
+  resume: checkpoints/mcs2_phase1/epoch_20.pth
+  batch_size: 16
 
 checkpointing:
   output_dir: checkpoints/mcs2_phase1/
