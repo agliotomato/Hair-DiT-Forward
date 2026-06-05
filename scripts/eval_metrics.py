@@ -324,7 +324,7 @@ def compute_fid(real_imgs: list, fake_imgs: list) -> float:
             return float("nan")
         return float(fid_score.calculate_fid_given_paths(
             [str(real_dir), str(fake_dir)],
-            batch_size=32, device=str(DEVICE), dims=2048, num_workers=0,
+            batch_size=32, device=str(DEVICE), dims=64, num_workers=0,
         ))
 
 
