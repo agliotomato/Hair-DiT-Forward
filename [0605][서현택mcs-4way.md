@@ -122,14 +122,14 @@ python3 scripts/eval_metrics.py \
 
 | Metric | mcs1 | mcs2 | mcs3 | mcs4 |
 |--------|------|------|------|------|
-| Edge IoU ↑ | | | | |
-| Chamfer Dist ↓ | | | | |
-| Sketch LPIPS ↓ | | | | |
-| Hair FID ↓ | | | | |
-| LPIPS (GT) ↓ | | | | |
-| SSIM (GT) ↑ | | | | |
-| PSNR (GT) ↑ | | | | |
-| Boundary FID ↓ | | | | |
-| Boundary LPIPS ↓ | | | | |
-| Face LPIPS ↓ | | | | |
-| ArcFace Cos ↑ | | | | |
+| Edge IoU ↑ | 0.0640 | 0.0643 | 0.0628 | 0.0628 |
+| Chamfer Dist ↓ | 4.7013 | 4.6655 | 4.8089 | 4.8726 |
+| Sketch LPIPS ↓ | 0.7599 | 0.7679 | 0.7567 | 0.7416 |
+| Hair FID ↓ | 1.1078 | 1.5370 | 1.5352 | 1.9295 |
+| LPIPS (GT) ↓ | 0.2973 | 0.3314 | 0.3066 | 0.3282 |
+| SSIM (GT) ↑ | 0.5893 | 0.5891 | 0.5866 | 0.5906 |
+| PSNR (GT) ↑ | 11.6486 | 11.4002 | 11.5611 | 11.4483 |
+| Boundary FID ↓ | 0.0121 | 0.0174 | 0.0108 | 0.0204 |
+| Boundary LPIPS ↓ | 0.0197 | 0.0214 | 0.0220 | 0.0227 |
+| Face LPIPS ↓ | 0.0033 | 0.0037 | 0.0033 | 0.0037 |
+| ArcFace Cos ↑ | 0.6860 | 0.6733 | 0.7014 | 0.6685 |
