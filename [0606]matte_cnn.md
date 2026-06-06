@@ -1,4 +1,4 @@
-# MatteCNN Ablation 결과 보고 (mcs1–6)
+# MatteCNN Ablation 결과 보고 (mcs5,6)
 
 ## 실험 설정
 
