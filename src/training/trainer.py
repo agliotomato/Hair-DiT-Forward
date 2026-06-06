@@ -180,6 +180,7 @@ class Trainer:
             model_id=model_id,
             vae=self.vae,
             num_layers=num_layers,
+            block_offset=cfg["model"].get("block_offset", 0),
             local_files_only=local_files_only,
             use_sketch_decoder=cfg["model"].get("use_sketch_decoder", False),
             zero_matte_cond=cfg["model"].get("zero_matte_cond", False),

@@ -142,6 +142,7 @@ class HairControlNet(nn.Module):
         model_id: str,
         vae: VAEWrapper,
         num_layers: int = 12,
+        block_offset: int = 0,
         local_files_only: bool = False,
         use_sketch_decoder: bool = False,
         zero_matte_cond: bool = False,
@@ -167,6 +168,17 @@ class HairControlNet(nn.Module):
             #   16ch: sketch_latent + matte_feat
             #    1ch: raw matte_latent (explicit spatial mask)
         )
+
+        # Remap weights from back blocks if block_offset > 0.
+        # from_transformer always copies blocks 0..num_layers-1;
+        # with offset=12, overwrite with transformer blocks 12..23 instead.
+        if block_offset > 0:
+            src = transformer.transformer_blocks
+            dst = self.controlnet.transformer_blocks
+            with torch.no_grad():
+                for k in range(num_layers):
+                    dst[k].load_state_dict(src[k + block_offset].state_dict())
+
         # Free transformer memory — it's held separately in Trainer
         del transformer
         torch.cuda.empty_cache()

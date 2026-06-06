@@ -305,6 +305,7 @@ def main():
         model_id=model_id,
         vae=vae,
         num_layers=cfg["model"].get("num_controlnet_layers", 12),
+        block_offset=cfg["model"].get("block_offset", 0),
         local_files_only=local_files_only,
         zero_matte_cond=cfg["model"].get("zero_matte_cond", False),
         zero_matte_feat=cfg["model"].get("zero_matte_feat", False),
