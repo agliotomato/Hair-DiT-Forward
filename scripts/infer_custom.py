@@ -135,14 +135,31 @@ def to_pil(t: torch.Tensor) -> Image.Image:
 def run_sampling(
     controlnet, transformer, scheduler, schedule,
     sketch, matte, num_steps, device,
+    vae=None, face=None,
 ) -> torch.Tensor:
-    """Euler sampling → hair latent (1, 16, 64, 64)."""
+    """Euler sampling → hair latent (1, 16, 64, 64).
+
+    BLD: face가 있으면 매 스텝마다 matte 바깥을 face noised latent로 블렌딩.
+    """
     scheduler.set_timesteps(num_steps, device=device)
-    latents = torch.randn(1, 16, 64, 64, device=device, dtype=torch.bfloat16)
+
+    noise = torch.randn(1, 16, 64, 64, device=device, dtype=torch.bfloat16)
+    latents = noise.clone()
+
+    # BLD 사전 준비
+    bld = face is not None and vae is not None
+    if bld:
+        x0_bg    = vae.encode(face.to(device=device, dtype=torch.bfloat16))   # (1,16,64,64)
+        mask_lat = F.interpolate(matte.to(device), size=(64, 64), mode="area").to(dtype=torch.bfloat16)  # (1,1,64,64)
 
     for i, t in enumerate(tqdm(scheduler.timesteps, desc="steps", leave=False)):
         sigma = scheduler.sigmas[i].to(device)
         sigmas_1d = sigma.view(1).to(dtype=torch.bfloat16)
+
+        # BLD: matte 바깥을 face의 noised latent로 고정
+        if bld:
+            noised_bg = (1.0 - sigma) * x0_bg + sigma * noise
+            latents   = mask_lat * latents + (1.0 - mask_lat) * noised_bg
 
         block_samples, null_enc_hs, null_pooled = controlnet(
             noisy_latent=latents,
@@ -290,6 +307,8 @@ def main():
         num_layers=cfg["model"].get("num_controlnet_layers", 12),
         local_files_only=local_files_only,
         zero_matte_cond=cfg["model"].get("zero_matte_cond", False),
+        zero_matte_feat=cfg["model"].get("zero_matte_feat", False),
+        zero_raw_matte=cfg["model"].get("zero_raw_matte", False),
     )
     ckpt = torch.load(args.checkpoint, map_location=device, weights_only=True)
     controlnet.load_state_dict(ckpt["controlnet"])
@@ -321,13 +340,14 @@ def main():
                 print(f"  [WARNING] matte 없음: {matte_file} → 스케치 fg 영역으로 대체")
             matte = sketch_to_matte(sketch)
 
+        face = load_face(face_file) if face_file and face_file.exists() else None
         hair_latent = run_sampling(
             controlnet, transformer, scheduler, schedule,
             sketch, matte, args.num_steps, device,
+            vae=vae, face=face,
         )
 
-        if face_file and face_file.exists():
-            face   = load_face(face_file)
+        if face is not None:
             result = composite_full(vae, hair_latent, matte, face, device)
         else:
             if face_file:
