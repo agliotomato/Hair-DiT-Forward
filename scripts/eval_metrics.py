@@ -14,16 +14,25 @@ Dataset paths are derived automatically from the split:
   dataset/{split}/matte/test  — GT mattes (grayscale)
   dataset/{split}/sketch/test — sketch images
 
-Metrics:
-  [1] Sketch Fidelity   : Edge IoU ↑,  Chamfer Distance ↓,  Sketch LPIPS ↓
-  [2] Generation Quality: Hair FID ↓,  LPIPS(GT) ↓,  SSIM(GT) ↑,  PSNR(GT) ↑
-  [3] Boundary Quality  : Boundary FID ↓,  Boundary LPIPS ↓
-  [4] Identity          : Face LPIPS ↓,  ArcFace Cosine ↑
+Metrics (최종 7개 — 스펙 확정):
+  per-image (braid/unbraid/macro 분리 보고, braid는 ±CI95):
+    ① Sketch LPIPS ↓  (구조,     paired vs sketch, hair 영역)
+    ② Edge IoU ↑      (구조 보조, paired vs sketch, hair 영역)
+    ④ LPIPS (GT) ↓    (외형,     paired vs GT,     hair-masked)
+    ⑥ Boundary LPIPS ↓(경계 보조, paired vs GT,     경계 band)
+  FID (통합 573만 보고, dims=2048):
+    ③ Hair FID ↓          (리얼리즘,   hair 마스킹/크롭)
+    ⑤ Boundary FID ↓      (경계,       경계 band)
+    ⑦ Full-portrait FID ↓ (전역 조화,  whole-image)
+
+  보고 단위 규칙:
+    - FID(③⑤⑦)는 2048-dim 공분산 → n=107 braid 단독은 rank-deficient. 통합(573)만 보고.
+    - per-image(①②④⑥)는 unbraid/braid/macro 분리. braid는 ±CI95.
 
 Outputs:
-  <out>_per_image.csv
-  <out>_summary.csv
-  console table + LaTeX tabular
+  <out>_per_image.csv  (stem, split, ①②④⑥)
+  <out>_summary.csv    (metric, axis, paired, unit, braid, braid_ci95, unbraid, macro, combined573)
+  console table
 """
 
 from __future__ import annotations
@@ -303,7 +312,12 @@ def arcface_cosine(pred: np.ndarray, gt: np.ndarray, matte: np.ndarray) -> float
 # FID
 # ---------------------------------------------------------------------------
 
-def compute_fid(real_imgs: list, fake_imgs: list) -> float:
+def compute_fid(real_imgs: list, fake_imgs: list, dims: int = 2048) -> float:
+    """표준 InceptionV3 FID. dims=2048 (pool3 2048-dim 공분산).
+
+    주의: 2048-dim 공분산은 표본 수 n < 2048 이면 rank-deficient → 통합(573)에서만
+    안정적. braid 단독(n=107) 분리 보고 금지 (스펙 보고 단위 규칙).
+    """
     try:
         from pytorch_fid import fid_score
     except ImportError:
@@ -324,7 +338,7 @@ def compute_fid(real_imgs: list, fake_imgs: list) -> float:
             return float("nan")
         return float(fid_score.calculate_fid_given_paths(
             [str(real_dir), str(fake_dir)],
-            batch_size=32, device=str(DEVICE), dims=64, num_workers=0,
+            batch_size=32, device=str(DEVICE), dims=dims, num_workers=0,
         ))
 
 
@@ -332,33 +346,21 @@ def compute_fid(real_imgs: list, fake_imgs: list) -> float:
 # Output
 # ---------------------------------------------------------------------------
 
-METRIC_GROUPS = [
-    ("Sketch Fidelity", [
-        ("Edge IoU ↑",       "edge_iou",     None,       True),
-        ("Chamfer Dist ↓",   "chamfer",      None,       False),
-        ("Sketch LPIPS ↓",   "sketch_lpips", None,       False),
-    ]),
-    ("Generation Quality", [
-        ("Hair FID ↓",       None,           "hair_fid", False),
-        ("LPIPS (GT) ↓",     "lpips",        None,       False),
-        ("SSIM (GT) ↑",      "ssim",         None,       True),
-        ("PSNR (GT) ↑",      "psnr",         None,       True),
-    ]),
-    ("Boundary Quality", [
-        ("Boundary FID ↓",   None,           "bnd_fid",  False),
-        ("Boundary LPIPS ↓", "bnd_lpips",    None,       False),
-    ]),
-    ("Identity", [
-        ("Face LPIPS ↓",     "face_lpips",   None,       False),
-        ("ArcFace Cos ↑",    "arcface_cos",  None,       True),
-    ]),
+# 최종 정량 지표 7개 (스펙 확정).
+#   (label, per_image_key, fid_key, higher_better, axis, paired, unit)
+#     unit = "split"    → per-image. braid/unbraid/macro 분리 보고 (braid는 ±CI)
+#     unit = "combined" → FID. 통합(573)만 보고 (2048-dim 공분산, braid n=107 rank-deficient)
+SPEC_METRICS = [
+    ("Sketch LPIPS ↓",      "sketch_lpips", None,       False, "구조",       "paired(vs sketch)", "split"),
+    ("Edge IoU ↑",          "edge_iou",     None,       True,  "구조(보조)", "paired(vs sketch)", "split"),
+    ("Hair FID ↓",          None,           "hair_fid", False, "리얼리즘",   "unpaired",          "combined"),
+    ("LPIPS (GT) ↓",        "lpips",        None,       False, "외형",       "paired(vs GT)",     "split"),
+    ("Boundary FID ↓",      None,           "bnd_fid",  False, "경계",       "unpaired",          "combined"),
+    ("Boundary LPIPS ↓",    "bnd_lpips",    None,       False, "경계(보조)", "paired(vs GT)",     "split"),
+    ("Full-portrait FID ↓", None,           "full_fid", False, "전역 조화",  "unpaired",          "combined"),
 ]
 
-PER_IMAGE_KEYS = [
-    "edge_iou", "chamfer", "sketch_lpips",
-    "psnr", "ssim", "lpips",
-    "bnd_lpips", "face_lpips", "arcface_cos",
-]
+PER_IMAGE_KEYS = ["sketch_lpips", "edge_iou", "lpips", "bnd_lpips"]
 
 
 def _fmt(v) -> str:
@@ -372,35 +374,96 @@ def _safe_mean(vals):
     return sum(vs) / len(vs) if vs else None
 
 
-def print_table(rows: list, fid: dict, split: str, tag: str, n: int):
-    W = 14
-    print(f"\n{'='*52}")
-    print(f"  [{split.upper()}]  tag={tag}  n={n}")
-    print("=" * 52)
-    print(f"  {'Metric':<24}  {tag:>{W}}")
-    print("=" * 52)
-    for group, metrics in METRIC_GROUPS:
-        print(f"\n--- {group} ---")
-        for label, pk, fk, _ in metrics:
-            v = fid.get(fk) if fk else _safe_mean([r.get(pk) for r in rows])
-            print(f"  {label:<24}  {_fmt(v):>{W}}")
-    print("=" * 52)
+def _ci95(vals):
+    """95% 신뢰구간 half-width (1.96·SD/√n). 표본<2면 None."""
+    vs = [v for v in vals if v is not None and not (isinstance(v, float) and math.isnan(v))]
+    n = len(vs)
+    if n < 2:
+        return None
+    m = sum(vs) / n
+    var = sum((v - m) ** 2 for v in vs) / (n - 1)
+    return 1.96 * math.sqrt(var) / math.sqrt(n)
 
 
-def print_latex(rows: list, fid: dict, tag: str):
-    print(f"\n% LaTeX — {tag}")
-    print("\\begin{tabular}{lc}")
-    print("\\hline")
-    print(f"Metric & {tag} \\\\")
-    print("\\hline")
-    for group, metrics in METRIC_GROUPS:
-        print(f"\\multicolumn{{2}}{{l}}{{\\textit{{{group}}}}} \\\\")
-        for label, pk, fk, _ in metrics:
-            v = fid.get(fk) if fk else _safe_mean([r.get(pk) for r in rows])
-            clean = label.replace("↑", "$\\uparrow$").replace("↓", "$\\downarrow$")
-            print(f"  {clean} & {_fmt(v)} \\\\")
-    print("\\hline")
-    print("\\end{tabular}")
+def hair_masked_lpips(pred: np.ndarray, gt: np.ndarray, matte: np.ndarray) -> float:
+    """hair 영역 bbox crop + 마스킹 후 LPIPS (vs GT)."""
+    hair = matte > 127
+    p_crop, mc = _bbox_crop(pred, hair)
+    g_crop, _  = _bbox_crop(gt,   hair)
+    p_crop[~mc] = 0
+    g_crop[~mc] = 0
+    if p_crop.shape[0] < 8 or p_crop.shape[1] < 8:
+        return float("nan")
+    return compute_lpips(p_crop, g_crop)
+
+
+def build_summary(rows_braid, rows_unbraid, fid: dict) -> list[dict]:
+    """SPEC_METRICS 각 지표를 보고단위별로 정리.
+    combined 모드: rows_braid, rows_unbraid 둘 다 지정. single split: 한쪽만(나머지 None)."""
+    out = []
+    for label, pk, fk, higher, axis, paired, unit in SPEC_METRICS:
+        r = {"label": label, "axis": axis, "paired": paired, "unit": unit,
+             "braid": None, "braid_ci95": None, "unbraid": None, "unbraid_ci95": None,
+             "macro": None, "macro_ci95": None, "combined": None}
+        if unit == "combined":
+            r["combined"] = fid.get(fk)
+        else:
+            if rows_braid is not None:
+                r["braid"]      = _safe_mean([x.get(pk) for x in rows_braid])
+                r["braid_ci95"] = _ci95([x.get(pk) for x in rows_braid])
+            if rows_unbraid is not None:
+                r["unbraid"]      = _safe_mean([x.get(pk) for x in rows_unbraid])
+                r["unbraid_ci95"] = _ci95([x.get(pk) for x in rows_unbraid])
+            if r["braid"] is not None and r["unbraid"] is not None:
+                r["macro"] = (r["braid"] + r["unbraid"]) / 2
+                # 독립 두 그룹 평균의 평균 → CI = ½·√(CI_b² + CI_u²)
+                cb, cu = r["braid_ci95"], r["unbraid_ci95"]
+                if cb is not None and cu is not None:
+                    r["macro_ci95"] = 0.5 * math.sqrt(cb ** 2 + cu ** 2)
+        out.append(r)
+    return out
+
+
+def print_summary(summary: list[dict], tag: str, n_b: int, n_u: int):
+    print(f"\n{'='*80}")
+    print(f"  tag={tag}   braid n={n_b}   unbraid n={n_u}   combined N={n_b + n_u}")
+    print("=" * 80)
+    def _mc(v, ci):
+        s = _fmt(v)
+        return f"{s}±{ci:.4f}" if (v is not None and ci is not None) else s
+
+    print(f"  {'Metric':<18}{'축':<10}{'braid(±CI95)':>22}{'unbraid(±CI95)':>22}{'macro(±CI95)':>22}{'comb573':>10}")
+    print("-" * 100)
+    for r in summary:
+        if r["unit"] == "combined":
+            braid = unbraid = macro = "—"
+            comb = _fmt(r["combined"])
+        else:
+            braid   = _mc(r["braid"],   r["braid_ci95"])
+            unbraid = _mc(r["unbraid"], r["unbraid_ci95"])
+            macro   = _mc(r["macro"],   r["macro_ci95"])
+            comb = "—"
+        print(f"  {r['label']:<18}{r['axis']:<10}{braid:>22}{unbraid:>22}{macro:>22}{comb:>10}")
+    print("=" * 100)
+    print("  · FID(③⑤⑦)=통합573만  · per-image(①②④⑥)=braid/unbraid/macro (모두 ±CI95)")
+    print("  · run 간 유의차 확정은 scripts/stats_compare.py (paired t-test + Wilcoxon)")
+
+
+def write_summary_csv(summary: list[dict], tag: str, path: Path):
+    with open(path, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["metric", "axis", "paired", "unit",
+                    "braid", "braid_ci95", "unbraid", "unbraid_ci95",
+                    "macro", "macro_ci95", "combined573"])
+        ci = lambda v: (f"{v:.4f}" if v is not None else "N/A")
+        for r in summary:
+            w.writerow([
+                r["label"], r["axis"], r["paired"], r["unit"],
+                _fmt(r["braid"]),   ci(r["braid_ci95"]),
+                _fmt(r["unbraid"]), ci(r["unbraid_ci95"]),
+                _fmt(r["macro"]),   ci(r["macro_ci95"]),
+                _fmt(r["combined"]),
+            ])
 
 
 # ---------------------------------------------------------------------------
@@ -423,12 +486,8 @@ def discover_stems(pred_dir: Path, gt_dir: Path, suffix: str) -> list[str]:
     return sorted(common)
 
 
-def _process_split(
-    split_name: str,
-    pred_dir: Path,
-    suffix: str,
-) -> tuple[list[dict], list, list, list, list]:
-    """단일 split 평가. (rows, fid_hr, fid_hf, fid_br, fid_bf) 반환."""
+def _process_split(split_name: str, pred_dir: Path, suffix: str) -> dict:
+    """단일 split 평가. per-image rows(split 라벨 포함) + FID용 이미지 리스트 dict 반환."""
     ds     = SPLITS[split_name]
     gt_dir = ds["img"]
     mt_dir = ds["matte"]
@@ -438,8 +497,9 @@ def _process_split(
     print(f"  [{split_name}] {len(stems)}개")
 
     rows = []
-    fid_hr, fid_hf = [], []
-    fid_br, fid_bf = [], []
+    hair_r, hair_f = [], []   # Hair FID  (hair 마스킹/크롭)
+    bnd_r,  bnd_f  = [], []   # Boundary FID (경계 band)
+    full_r, full_f = [], []   # Full-portrait FID (whole-image)
 
     for stem in tqdm(stems, desc=f"[{split_name}]"):
         pred_name = f"{stem}{suffix}.png" if suffix else f"{stem}.png"
@@ -450,7 +510,7 @@ def _process_split(
         sk    = np.array(Image.open(sk_dir / f"{stem}.png").convert("RGB"))
 
         if not pred_path.exists():
-            rows.append({"stem": stem, **{k: None for k in PER_IMAGE_KEYS}})
+            rows.append({"stem": stem, "split": split_name, **{k: None for k in PER_IMAGE_KEYS}})
             continue
 
         pred = np.array(Image.open(pred_path).convert("RGB"))
@@ -461,64 +521,67 @@ def _process_split(
         sk_e   = canny_edges(sk)
         hair   = matte > 127
         bnd    = get_boundary_mask(matte)
-        gq     = gen_quality_metrics(pred, gt, matte)
 
         rows.append({
             "stem":         stem,
-            "edge_iou":     edge_iou(pred_e, sk_e, matte),
-            "chamfer":      chamfer_distance(pred_e, sk_e, matte),
-            "sketch_lpips": sketch_lpips(pred, sk, matte),
-            "psnr":         gq["psnr"],
-            "ssim":         gq["ssim"],
-            "lpips":        gq["lpips"],
-            "bnd_lpips":    boundary_lpips(pred, gt, matte),
-            "face_lpips":   face_lpips(pred, gt, matte),
-            "arcface_cos":  arcface_cosine(pred, gt, matte),
+            "split":        split_name,
+            "sketch_lpips": sketch_lpips(pred, sk, matte),         # 구조 (vs sketch)
+            "edge_iou":     edge_iou(pred_e, sk_e, matte),         # 구조 보조 (vs sketch)
+            "lpips":        hair_masked_lpips(pred, gt, matte),    # 외형 (vs GT, hair-masked)
+            "bnd_lpips":    boundary_lpips(pred, gt, matte),       # 경계 보조 (vs GT)
         })
 
-        fid_hr.append(extract_region_crop(gt,   hair))
-        fid_hf.append(extract_region_crop(pred, hair))
-        fid_br.append(extract_region_crop(gt,   bnd, min_px=16))
-        fid_bf.append(extract_region_crop(pred, bnd, min_px=16))
+        hair_r.append(extract_region_crop(gt,   hair))
+        hair_f.append(extract_region_crop(pred, hair))
+        bnd_r.append(extract_region_crop(gt,   bnd, min_px=16))
+        bnd_f.append(extract_region_crop(pred, bnd, min_px=16))
+        full_r.append(gt)
+        full_f.append(pred)
 
-    return rows, fid_hr, fid_hf, fid_br, fid_bf
+    return {"rows": rows, "hair_r": hair_r, "hair_f": hair_f,
+            "bnd_r": bnd_r, "bnd_f": bnd_f, "full_r": full_r, "full_f": full_f}
 
 
-def _finalize(rows, fid_hr, fid_hf, fid_br, fid_bf, split_name, tag, out):
-    print("\nFID 계산 중...")
+def _compute_fids(parts: dict) -> dict:
+    """통합(573) FID 3종 계산 (dims=2048)."""
+    print("\nFID 계산 중 (통합, dims=2048)...")
     fid = {
-        "hair_fid": compute_fid([x for x in fid_hr if x is not None],
-                                [x for x in fid_hf if x is not None]),
-        "bnd_fid":  compute_fid([x for x in fid_br if x is not None],
-                                [x for x in fid_bf if x is not None]),
+        "hair_fid": compute_fid([x for x in parts["hair_r"] if x is not None],
+                                [x for x in parts["hair_f"] if x is not None]),
+        "bnd_fid":  compute_fid([x for x in parts["bnd_r"]  if x is not None],
+                                [x for x in parts["bnd_f"]  if x is not None]),
+        "full_fid": compute_fid([x for x in parts["full_r"] if x is not None],
+                                [x for x in parts["full_f"] if x is not None]),
     }
-    print(f"  Hair FID: {_fmt(fid['hair_fid'])}")
-    print(f"  Bnd  FID: {_fmt(fid['bnd_fid'])}")
+    for k in ("hair_fid", "bnd_fid", "full_fid"):
+        print(f"  {k}: {_fmt(fid[k])}")
+    return fid
 
-    valid = [r for r in rows if r.get("psnr") is not None]
-    print_table(valid, fid, split_name, tag, len(valid))
-    print_latex(valid, fid, tag)
 
-    per_path = Path(f"{out}_per_image.csv")
-    with open(per_path, "w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=["stem"] + PER_IMAGE_KEYS)
+def _merge_parts(pb: dict, pu: dict) -> dict:
+    return {k: pb[k] + pu[k] for k in ("hair_r", "hair_f", "bnd_r", "bnd_f", "full_r", "full_f")}
+
+
+def _n_valid(rows):
+    return sum(1 for r in rows if r.get("sketch_lpips") is not None)
+
+
+def _write_per_image(rows, path: Path):
+    with open(path, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=["stem", "split"] + PER_IMAGE_KEYS)
         w.writeheader()
         w.writerows(rows)
 
-    sum_path = Path(f"{out}_summary.csv")
-    with open(sum_path, "w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(["metric", tag])
-        for _, metrics in METRIC_GROUPS:
-            for label, pk, fk, _ in metrics:
-                v = fid.get(fk) if fk else _safe_mean([r.get(pk) for r in valid])
-                w.writerow([label, _fmt(v)])
 
+def _save_and_report(summary, rows, tag, out, n_b, n_u):
+    print_summary(summary, tag, n_b, n_u)
+    per_path = Path(f"{out}_per_image.csv"); _write_per_image(rows, per_path)
+    sum_path = Path(f"{out}_summary.csv");  write_summary_csv(summary, tag, sum_path)
     print(f"\n저장 완료:\n  {per_path}\n  {sum_path}")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Evaluate braid/unbraid/combined split.")
+    parser = argparse.ArgumentParser(description="Evaluate braid/unbraid/combined split (7-metric spec).")
     parser.add_argument("--split",       required=True, choices=list(SPLITS.keys()),
                         help="'braid', 'unbraid', 'combined'")
     parser.add_argument("--pred",        required=True, nargs="+",
@@ -532,24 +595,17 @@ def main():
     args = parser.parse_args()
 
     suffix = args.pred_suffix
-    try_load_face_model()
 
     if args.split == "combined":
         if len(args.pred) == 1:
-            # 단일 폴더: braid/unbraid GT stem과 교차하여 자동 분리
-            single_dir = Path(args.pred[0])
-            if not single_dir.exists():
-                print(f"[ERROR] pred 디렉토리 없음: {single_dir}")
-                sys.exit(1)
-            braid_dir   = single_dir
-            unbraid_dir = single_dir
+            braid_dir = unbraid_dir = Path(args.pred[0])
+            if not braid_dir.exists():
+                print(f"[ERROR] pred 디렉토리 없음: {braid_dir}"); sys.exit(1)
         elif len(args.pred) == 2:
-            braid_dir   = Path(args.pred[0])
-            unbraid_dir = Path(args.pred[1])
-            for p in [braid_dir, unbraid_dir]:
+            braid_dir, unbraid_dir = Path(args.pred[0]), Path(args.pred[1])
+            for p in (braid_dir, unbraid_dir):
                 if not p.exists():
-                    print(f"[ERROR] pred 디렉토리 없음: {p}")
-                    sys.exit(1)
+                    print(f"[ERROR] pred 디렉토리 없음: {p}"); sys.exit(1)
         else:
             print("[ERROR] --split combined은 --pred를 1개(단일 폴더) 또는 2개(braid unbraid) 지정하세요")
             sys.exit(1)
@@ -558,32 +614,30 @@ def main():
         out = Path(args.out) if args.out else ROOT / "eval_results" / f"combined_{braid_dir.name}"
         out.parent.mkdir(parents=True, exist_ok=True)
 
-        print(f"split  : combined (braid + unbraid)")
+        print("split  : combined (braid + unbraid)")
         print(f"pred   : {braid_dir}" + (f"  |  {unbraid_dir}" if braid_dir != unbraid_dir else " (단일 폴더, 자동 분리)"))
         print(f"suffix : '{suffix}'")
         print(f"out    : {out}_*\n")
 
         print("braid 처리 중...")
-        r_b, hr_b, hf_b, br_b, bf_b = _process_split("braid",   braid_dir,   suffix)
+        pb = _process_split("braid",   braid_dir,   suffix)
         print("unbraid 처리 중...")
-        r_u, hr_u, hf_u, br_u, bf_u = _process_split("unbraid", unbraid_dir, suffix)
+        pu = _process_split("unbraid", unbraid_dir, suffix)
 
-        rows   = r_b  + r_u
-        fid_hr = hr_b + hr_u
-        fid_hf = hf_b + hf_u
-        fid_br = br_b + br_u
-        fid_bf = bf_b + bf_u
-
-        _finalize(rows, fid_hr, fid_hf, fid_br, fid_bf, "combined", tag, out)
+        fid = _compute_fids(_merge_parts(pb, pu))   # FID는 통합(573)만
+        summary = build_summary(pb["rows"], pu["rows"], fid)
+        _save_and_report(summary, pb["rows"] + pu["rows"], tag,
+                         out, _n_valid(pb["rows"]), _n_valid(pu["rows"]))
 
     else:
         if len(args.pred) != 1:
-            print("[ERROR] braid/unbraid split은 --pred를 1개만 지정하세요")
-            sys.exit(1)
+            print("[ERROR] braid/unbraid split은 --pred를 1개만 지정하세요"); sys.exit(1)
         pred_dir = Path(args.pred[0])
         if not pred_dir.exists():
-            print(f"[ERROR] pred 디렉토리 없음: {pred_dir}")
-            sys.exit(1)
+            print(f"[ERROR] pred 디렉토리 없음: {pred_dir}"); sys.exit(1)
+        if args.split == "braid":
+            print("[WARN] braid 단독 FID는 2048-dim에서 rank-deficient(n=107<2048). "
+                  "FID는 통합(573, --split combined)으로 보고 권장.")
 
         tag = args.tag or pred_dir.name
         out = Path(args.out) if args.out else ROOT / "eval_results" / f"{args.split}_{pred_dir.name}"
@@ -596,8 +650,14 @@ def main():
         print(f"gt     : {ds['img']}")
         print(f"out    : {out}_*\n")
 
-        rows, fid_hr, fid_hf, fid_br, fid_bf = _process_split(args.split, pred_dir, suffix)
-        _finalize(rows, fid_hr, fid_hf, fid_br, fid_bf, args.split, tag, out)
+        parts = _process_split(args.split, pred_dir, suffix)
+        fid = _compute_fids(parts)
+        rb, ru = (parts["rows"], None) if args.split == "braid" else (None, parts["rows"])
+        summary = build_summary(rb, ru, fid)
+        n = _n_valid(parts["rows"])
+        _save_and_report(summary, parts["rows"], tag, out,
+                         n if args.split == "braid" else 0,
+                         n if args.split == "unbraid" else 0)
 
 
 if __name__ == "__main__":

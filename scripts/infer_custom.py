@@ -47,6 +47,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from diffusers import FlowMatchEulerDiscreteScheduler, SD3Transformer2DModel
 from torchvision import transforms
 
+from src.data.utils import soft_composite
 from src.models.controlnet_sd35 import HairControlNet, gate_block_samples
 from src.models.vae_wrapper import VAEWrapper
 
@@ -119,6 +120,49 @@ def recolor_sketch(sketch: torch.Tensor, hair_color: tuple[int, int, int]) -> to
     result = s.clone()
     result[:, is_stroke] = color.unsqueeze(1).expand(-1, is_stroke.sum())
     return result.unsqueeze(0)
+
+
+def recolor_sketch_from_gt(
+    sketch: torch.Tensor,
+    gt_img: torch.Tensor,
+    matte: torch.Tensor,
+    min_pixels: int = 10,
+    quantize_bits: int = 5,
+) -> torch.Tensor:
+    """GT 헤어색으로 stroke를 칠한다 (SketchHairSalon 방식, 학습 StrokeColorSampler와 동일).
+
+    각 stroke 레이블 영역에 대해 GT target(img×matte)의 해당 위치 머리 픽셀의
+    **평균색**을 계산해 그 stroke 전체를 칠한다. 결정론적(deterministic)이라
+    같은 (sketch, gt) 입력이면 항상 동일한 recolored sketch를 만든다.
+
+    Args:
+        sketch: (1,3,512,512) [0,1]
+        gt_img: (1,3,512,512) [0,1] — GT 원본 이미지 (test set은 face와 동일)
+        matte:  (1,1,512,512) [0,1]
+    """
+    s = sketch.squeeze(0)                    # (3,H,W)
+    target = soft_composite(gt_img.squeeze(0), matte.squeeze(0))  # (3,H,W) = img*matte
+
+    shift = 8 - quantize_bits
+    sketch_u8 = (s * 255).byte()
+    sketch_q = (sketch_u8 >> shift) << shift  # 양자화로 stroke 레이블 검출
+
+    flat_q = sketch_q.view(3, -1).T
+    unique_colors = torch.unique(flat_q, dim=0)
+
+    out = s.clone()
+    for color in unique_colors:
+        r, g, b = color.tolist()
+        if r == 0 and g == 0 and b == 0:     # 검은 배경 stroke 제외
+            continue
+        mask = (sketch_q[0] == r) & (sketch_q[1] == g) & (sketch_q[2] == b)
+        hair_pixels = target[:, mask]                 # (3,N)
+        valid = hair_pixels.sum(dim=0) > 0.05
+        if valid.sum() < min_pixels:                  # GT 머리 픽셀 부족 → 원색 유지
+            continue
+        mean_color = hair_pixels[:, valid].float().mean(dim=1)  # (3,)
+        out[:, mask] = mean_color.unsqueeze(1)
+    return out.unsqueeze(0)
 
 
 def to_pil(t: torch.Tensor) -> Image.Image:
@@ -278,6 +322,9 @@ def main():
     parser.add_argument("--output_dir",  default="custom_results")
     parser.add_argument("--hair_color",  default=None,
                         help="stroke 색 교체 (R,G,B 0-255). 예: 139,90,43")
+    parser.add_argument("--recolor_from_gt", action="store_true",
+                        help="GT 이미지(=matte 영역 평균색)로 stroke 재착색 (SHS 방식). "
+                             "matte와 face(GT img) 필요. --hair_color보다 우선.")
     args = parser.parse_args()
 
     cfg    = load_config(args.config)
@@ -330,9 +377,6 @@ def main():
     for sketch_file, matte_file, face_file, stem in tqdm(pairs, desc="Generating"):
         sketch = load_sketch(sketch_file)
 
-        if hair_color:
-            sketch = recolor_sketch(sketch, hair_color)
-
         if matte_file and matte_file.exists():
             matte = load_matte(matte_file)
         else:
@@ -341,6 +385,14 @@ def main():
             matte = sketch_to_matte(sketch)
 
         face = load_face(face_file) if face_file and face_file.exists() else None
+
+        if args.recolor_from_gt:
+            if face is None:
+                print(f"  [WARNING] {stem}: GT(face) 없음 → recolor 생략, 원본 sketch 사용")
+            else:
+                sketch = recolor_sketch_from_gt(sketch, face, matte)
+        elif hair_color:
+            sketch = recolor_sketch(sketch, hair_color)
         hair_latent = run_sampling(
             controlnet, transformer, scheduler, schedule,
             sketch, matte, args.num_steps, device,
