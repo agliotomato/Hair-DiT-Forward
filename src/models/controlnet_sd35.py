@@ -19,6 +19,14 @@ Forward (zero_matte_cond=False, MCS default):
 zero_matte_cond=True: matte_feat and matte_latent are zeroed → ctrl_cond carries sketch only.
 zero_matte_feat=True: only matte_feat is zeroed; matte_latent (raw downsample) is kept.
 zero_raw_matte=True:  only matte_latent (raw downsample, 1ch) is zeroed; MatteCNN matte_feat is kept.
+
+block_offset (ControlNet init source):
+  SD3.5-medium has 24 transformer blocks; front are MM-DiT with dual attention
+  (attn2, AdaLN out = 9*dim), back are single-stream (no attn2, AdaLN out = 6*dim).
+  block_offset=0  → copy front blocks 0..11 (default, dual-attention ControlNet).
+  block_offset=12 → copy back blocks 12..23; ControlNet is rebuilt with
+                    dual_attention_layers remapped so structures match for 1:1 copy.
+  Either way 12 residuals are produced and injected into transformer blocks 2k, 2k+1.
 """
 
 from __future__ import annotations
@@ -159,25 +167,29 @@ class HairControlNet(nn.Module):
             local_files_only=local_files_only,
         )
 
-        self.controlnet = SD3ControlNetModel.from_transformer(
-            transformer,
-            num_layers=num_layers,
-            load_weights_from_transformer=True,
+        if block_offset == 0:
+            # Front blocks (0..num_layers-1): from_transformer copies matching
+            # blocks 1:1, inheriting the transformer's dual_attention_layers.
             # SD3ControlNetModel defaults to extra_conditioning_channels=1,
             # so pos_embed_input expects 17ch. We provide 17ch ctrl_cond:
             #   16ch: sketch_latent + matte_feat
             #    1ch: raw matte_latent (explicit spatial mask)
-        )
-
-        # Remap weights from back blocks if block_offset > 0.
-        # from_transformer always copies blocks 0..num_layers-1;
-        # with offset=12, overwrite with transformer blocks 12..23 instead.
-        if block_offset > 0:
-            src = transformer.transformer_blocks
-            dst = self.controlnet.transformer_blocks
-            with torch.no_grad():
-                for k in range(num_layers):
-                    dst[k].load_state_dict(src[k + block_offset].state_dict())
+            self.controlnet = SD3ControlNetModel.from_transformer(
+                transformer,
+                num_layers=num_layers,
+                load_weights_from_transformer=True,
+            )
+        else:
+            # Back blocks (block_offset..block_offset+num_layers-1).
+            # SD3.5-medium is hybrid: front blocks are MM-DiT with dual attention
+            # (attn2 present, AdaLN out = 9*dim), back blocks are single-stream
+            # (no attn2, AdaLN out = 6*dim). from_transformer would build a
+            # front-style ControlNet → shape mismatch on back weights.
+            # So we build the ControlNet with dual_attention_layers remapped to
+            # the back-block indices, then copy weights 1:1.
+            self.controlnet = self._build_offset_controlnet(
+                transformer, num_layers, block_offset
+            )
 
         # Free transformer memory — it's held separately in Trainer
         del transformer
@@ -202,6 +214,66 @@ class HairControlNet(nn.Module):
         self.zero_raw_matte  = zero_raw_matte
         # Keep VAE reference (frozen, not a submodule to avoid double registration)
         self._vae = vae
+
+    @staticmethod
+    def _build_offset_controlnet(
+        transformer: SD3Transformer2DModel,
+        num_layers: int,
+        block_offset: int,
+    ) -> SD3ControlNetModel:
+        """Build a 12-block ControlNet from transformer blocks block_offset..block_offset+num_layers-1.
+
+        SD3.5-medium uses dual attention only on the front blocks. Each ControlNet
+        block must structurally match its source block, so we remap the transformer's
+        dual_attention_layers into the new 0-based index space and rebuild from config.
+
+        Mapping stays compatible with the existing residual injection:
+        controlnet block k → transformer blocks 2k, 2k+1.
+        """
+        orig_dual = set(transformer.config.dual_attention_layers or ())
+        # Source block (k + block_offset) → new ControlNet index k
+        new_dual = tuple(
+            k for k in range(num_layers)
+            if (k + block_offset) in orig_dual
+        )
+
+        config = dict(transformer.config)
+        config["num_layers"] = num_layers
+        config["extra_conditioning_channels"] = 1  # → 17ch ctrl_cond input
+        config["dual_attention_layers"] = new_dual
+
+        controlnet = SD3ControlNetModel.from_config(config)
+
+        def _safe_copy(dst: nn.Module, src_state: dict) -> None:
+            """Load only keys present in dst with matching shape (strict=False
+            tolerates missing/extra names, but NOT shape mismatches)."""
+            dst_state = dst.state_dict()
+            filtered = {
+                k: v for k, v in src_state.items()
+                if k in dst_state and dst_state[k].shape == v.shape
+            }
+            dst.load_state_dict(filtered, strict=False)
+
+        with torch.no_grad():
+            # Shared front-end embedders (same as from_transformer)
+            _safe_copy(controlnet.pos_embed, transformer.pos_embed.state_dict())
+            _safe_copy(controlnet.time_text_embed, transformer.time_text_embed.state_dict())
+            _safe_copy(controlnet.context_embedder, transformer.context_embedder.state_dict())
+
+            # 1:1 weight transfer: transformer block (k+offset) → ControlNet block k.
+            # The last transformer block (context_pre_only=True) has a smaller
+            # norm1_context; _safe_copy skips its mismatched context-stream params
+            # while still transferring the image-stream weights.
+            for k in range(num_layers):
+                _safe_copy(
+                    controlnet.transformer_blocks[k],
+                    transformer.transformer_blocks[k + block_offset].state_dict(),
+                )
+            # Zero-init the control conditioning projection (ControlNet convention)
+            for p in controlnet.pos_embed_input.parameters():
+                nn.init.zeros_(p)
+
+        return controlnet
 
     def forward(
         self,
