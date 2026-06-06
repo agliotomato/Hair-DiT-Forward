@@ -183,6 +183,7 @@ class Trainer:
             local_files_only=local_files_only,
             use_sketch_decoder=cfg["model"].get("use_sketch_decoder", False),
             zero_matte_cond=cfg["model"].get("zero_matte_cond", False),
+            zero_matte_feat=cfg["model"].get("zero_matte_feat", False),
         )
 
         # Gradient checkpointing: saves ~40% activation memory at ~20% compute cost

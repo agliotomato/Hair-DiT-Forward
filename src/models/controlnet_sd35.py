@@ -17,6 +17,7 @@ Forward (zero_matte_cond=False, MCS default):
   6. return block_samples, null_encoder_hs (expanded to B), null_pooled (expanded to B)
 
 zero_matte_cond=True: matte_feat and matte_latent are zeroed → ctrl_cond carries sketch only.
+zero_matte_feat=True: only matte_feat is zeroed; matte_latent (raw downsample) is kept.
 """
 
 from __future__ import annotations
@@ -143,6 +144,7 @@ class HairControlNet(nn.Module):
         local_files_only: bool = False,
         use_sketch_decoder: bool = False,
         zero_matte_cond: bool = False,
+        zero_matte_feat: bool = False,
     ):
         super().__init__()
 
@@ -182,6 +184,7 @@ class HairControlNet(nn.Module):
         )
 
         self.zero_matte_cond = zero_matte_cond
+        self.zero_matte_feat = zero_matte_feat
         # Keep VAE reference (frozen, not a submodule to avoid double registration)
         self._vae = vae
 
@@ -224,6 +227,8 @@ class HairControlNet(nn.Module):
         if self.zero_matte_cond:
             matte_feat   = torch.zeros_like(matte_feat)
             matte_latent = torch.zeros_like(matte_latent)
+        elif self.zero_matte_feat:
+            matte_feat = torch.zeros_like(matte_feat)
         ctrl_cond = torch.cat([sketch_latent + matte_feat, matte_latent], dim=1)  # (B, 17, 64, 64)
 
         # 4. Expand null embeddings to batch size
@@ -277,6 +282,8 @@ class HairControlNet(nn.Module):
         if self.zero_matte_cond:
             matte_feat   = torch.zeros_like(matte_feat)
             matte_latent = torch.zeros_like(matte_latent)
+        elif self.zero_matte_feat:
+            matte_feat = torch.zeros_like(matte_feat)
         ctrl_cond = torch.cat([cond_latent + matte_feat, matte_latent], dim=1)  # (B, 17, 64, 64)
 
         null_enc_hs = self.null_encoder_hidden_states.expand(B, -1, -1).to(device=device, dtype=dtype)
