@@ -1,0 +1,19 @@
+# Back-12 ControlNet — Phase 1 Unbraid Pretrain
+# transformer blocks 12..23으로 ControlNet 초기화, 전체 24 블록에 residual 주입
+# ctrl_cond = cat([sketch_lat, matte_raw], dim=1)  (17ch, raw matte only, no MatteCNN)
+
+base: configs/phase1_unbraid.yaml
+
+model:
+  block_offset: 12
+  zero_matte_feat: true
+
+training:
+  schedule: none
+  batch_size: 16
+
+checkpointing:
+  output_dir: checkpoints/back12_raw_phase1/
+
+wandb:
+  tags: [back12, back12_raw, phase1, back-block, raw-only, no-gate]
