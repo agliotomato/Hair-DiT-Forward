@@ -24,3 +24,10 @@ eval_results_bld/
 eval_SHS/
 combined_passB/
 17ch_unbraid
+mcs/
+.venv/
+back12_raw_braid/
+back12_raw_unbraid/
+results/
+gtcolor/
+!gtcolor/eval_results/gtcolor_eval.md
