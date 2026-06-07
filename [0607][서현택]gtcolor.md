@@ -115,6 +115,26 @@ per-image 짝이 있는 4지표만 대상 (FID 3종은 분포 단위라 검정 �
 
 ---
 
+## ⑤ FID 불확실성 (부트스트랩 95% CI)
+
+FID는 분포 통계량이라 per-image CI가 없어 **부트스트랩**(real·fake 복원추출 → FID 재계산 B=500 → 2.5/97.5 퍼센타일)으로 추정.
+**dims=2048(보고서 스케일)은 n=573에서 유효 CI 불가** — 복원추출 시 유효 표본이 ~360으로 줄어 공분산이 rank-deficient → CI가 점추정 위로 떠버림([53,57] vs 38). 따라서 CI는 full-rank가 되는 **dims=64**에서 산출 (절대값은 FID-64 스케일, 순위·분리 판정용).
+
+**Hair FID 95% CI (573)**
+
+| run | FID (point) | 95% CI |
+|---|--:|:--:|
+| mcs4 | 0.097 | [0.070, 0.210] |
+| mcs3 | 0.104 | [0.073, 0.212] |
+| mcs6 | 0.148 | [0.102, 0.284] |
+| mcs1 | 0.150 | [0.112, 0.269] |
+| mcs2 | 0.150 | [0.105, 0.290] |
+| mcs5 | 0.160 | [0.110, 0.290] |
+
+→ **6개 run의 CI가 전부 겹침 — 유의하게 분리되는 쌍 없음.** best CI가 꼴찌 point까지 덮으며, dims=64에선 point 1위가 mcs4로 바뀔 만큼 순위가 불안정. **즉 Hair FID의 run 간 차이는 n=573에서 통계적으로 유의하지 않다.** (Full FID도 동일하게 전부 겹침. FID∞ 외삽 시 점추정 순위(mcs3 best)는 유지되나 불확실성은 미제공 — `eval_results/gtcolor_fid_infinity.md`, `eval_results/gtcolor_fid_ci.md` 참조.)
+
+---
+
 ## 종합 결론
 
 - 세 기준(braid·unbraid·macro) **모두 mcs3가 1위** — 순위가 split에 거의 흔들리지 않음.
